@@ -3,12 +3,21 @@ name: Release qualification
 on:
   workflow_call:
     inputs:
+      suite_ref:
+        description: Immutable qualification suite commit
+        required: true
+        type: string
       sink_ref:
         description: Immutable Sink tag or commit to qualify
         required: true
         type: string
   workflow_dispatch:
     inputs:
+      suite_ref:
+        description: Qualification suite tag or commit
+        required: true
+        default: main
+        type: string
       sink_ref:
         description: Immutable Sink tag or commit to qualify
         required: true
@@ -19,7 +28,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-qualification-${{ inputs.sink_ref }}
+  group: release-qualification-${{ inputs.suite_ref }}-${{ inputs.sink_ref }}
   cancel-in-progress: false
 
 jobs:
@@ -33,6 +42,7 @@ jobs:
         with:
           repository: liran/sink-production-suite
           path: suite
+          ref: ${{ inputs.suite_ref }}
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -62,6 +72,7 @@ jobs:
         with:
           repository: liran/sink-production-suite
           path: suite
+          ref: ${{ inputs.suite_ref }}
 
       - name: Check out Sink candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

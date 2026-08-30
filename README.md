@@ -108,14 +108,17 @@ The public reusable workflow accepts an immutable Sink tag or commit:
 ```yaml
 jobs:
   qualify:
-    uses: liran/sink-production-suite/.github/workflows/release-qualification.yml@main
+    uses: liran/sink-production-suite/.github/workflows/release-qualification.yml@SUITE_COMMIT
     with:
+      suite_ref: SUITE_COMMIT
       sink_ref: v0.6.1
 ```
 
 It runs race tests, lint, bounded stateful fuzzing, the seven-store backend
 matrix, controlled recovery, representative load, lag checks, and dead-letter
-checks without repository secrets.
+checks without repository secrets. Use the same immutable suite commit for the
+workflow reference and `suite_ref` so the workflow definition and test source
+cannot drift independently.
 
 ## Application semantics
 
