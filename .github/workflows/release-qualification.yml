@@ -1,0 +1,83 @@
+name: Release qualification
+
+on:
+  workflow_call:
+    inputs:
+      sink_ref:
+        description: Immutable Sink tag or commit to qualify
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      sink_ref:
+        description: Immutable Sink tag or commit to qualify
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-qualification-${{ inputs.sink_ref }}
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: Contract, race, lint, and fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out public qualification suite
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: liran/sink-production-suite
+          path: suite
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: suite/go.mod
+          cache-dependency-path: suite/go.sum
+          cache: true
+
+      - name: Run race tests
+        run: make -C suite test-race
+
+      - name: Run lint
+        run: make -C suite lint
+
+      - name: Run bounded stateful fuzzing
+        env:
+          FUZZ_TIME: 30s
+        run: make -C suite fuzz
+
+  backends:
+    name: Backend, recovery, and load qualification
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out public qualification suite
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: liran/sink-production-suite
+          path: suite
+
+      - name: Check out Sink candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: liran/sink
+          path: sink-server
+          ref: ${{ inputs.sink_ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: suite/go.mod
+          cache-dependency-path: suite/go.sum
+          cache: true
+
+      - name: Run public production qualification
+        env:
+          SINK_SERVER_DIR: ${{ github.workspace }}/sink-server
+        run: make -C suite test-production

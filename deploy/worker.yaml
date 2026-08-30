@@ -1,0 +1,106 @@
+mode: worker
+
+storages:
+  - name: primary
+    driver: opensearch
+    search:
+      endpoints:
+        - http://opensearch:9200
+    kafka:
+      enabled: true
+      brokers:
+        - kafka:19092
+      topic: sink-production-mutations
+      group_id: sink-production-workers
+      dead_letter_topic: sink-production-mutations.dlq
+      topic_partitions: 8
+      topic_replication_factor: 1
+      max_poll_records: 500
+      max_retry_attempts: 30
+      retry_backoff_milliseconds: 100
+      max_retry_backoff_milliseconds: 10000
+  - name: secondary
+    driver: opensearch
+    search:
+      endpoints:
+        - http://opensearch:9200
+    kafka:
+      enabled: true
+      brokers:
+        - kafka-secondary:19092
+      topic: sink-production-secondary-mutations
+      group_id: sink-production-secondary-workers
+      dead_letter_topic: sink-production-secondary-mutations.dlq
+      topic_partitions: 8
+      topic_replication_factor: 1
+      max_poll_records: 500
+      max_retry_attempts: 30
+      retry_backoff_milliseconds: 100
+      max_retry_backoff_milliseconds: 10000
+  - name: sync-only
+    driver: opensearch
+    search:
+      endpoints:
+        - http://opensearch:9200
+  - name: elasticsearch-sync
+    driver: elasticsearch
+    search:
+      endpoints:
+        - http://elasticsearch:9200
+  - name: elasticsearch-async
+    driver: elasticsearch
+    search:
+      endpoints:
+        - http://elasticsearch:9200
+    kafka:
+      enabled: true
+      brokers:
+        - kafka:19092
+      topic: sink-production-elasticsearch-mutations
+      group_id: sink-production-elasticsearch-workers
+      dead_letter_topic: sink-production-elasticsearch-mutations.dlq
+      topic_partitions: 8
+      topic_replication_factor: 1
+      max_poll_records: 500
+      max_retry_attempts: 30
+      retry_backoff_milliseconds: 100
+      max_retry_backoff_milliseconds: 10000
+  - name: mongodb-sync
+    driver: mongodb
+    mongodb:
+      uri: mongodb://mongodb:27017/?replicaSet=rs0
+      metadata_field: __sink
+      max_concurrent_writes: 64
+      max_concurrent_groups: 16
+  - name: mongodb-async
+    driver: mongodb
+    mongodb:
+      uri: mongodb://mongodb:27017/?replicaSet=rs0
+      metadata_field: __sink
+      max_concurrent_writes: 64
+      max_concurrent_groups: 16
+    kafka:
+      enabled: true
+      brokers:
+        - kafka-secondary:19092
+      topic: sink-production-mongodb-mutations
+      group_id: sink-production-mongodb-workers
+      dead_letter_topic: sink-production-mongodb-mutations.dlq
+      topic_partitions: 8
+      topic_replication_factor: 1
+      max_poll_records: 500
+      max_retry_attempts: 30
+      retry_backoff_milliseconds: 100
+      max_retry_backoff_milliseconds: 10000
+
+service:
+  max_operations: 1000
+  max_merge_attempts: 50
+  lua:
+    timeout_milliseconds: 100
+    max_source_bytes: 65536
+    max_result_bytes: 16777216
+    max_cached_programs: 256
+    max_instructions: 1000000
+
+shutdown_timeout_seconds: 15
