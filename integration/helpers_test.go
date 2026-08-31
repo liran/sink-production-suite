@@ -159,7 +159,8 @@ func sinkAddressForStore(t *testing.T, store string, index string, key string) s
 
 func writePut(t *testing.T, ctx context.Context, client *sink.Client, address sink.Address, value any) {
 	t.Helper()
-	operation, err := sink.NewPut(address, value, sink.WriteUpsert)
+	document := documentForAddress(t, address, value)
+	operation, err := sink.NewPut(address, document, sink.WriteUpsert)
 	if err != nil {
 		t.Fatalf("sink.NewPut() error = %v", err)
 	}
@@ -177,7 +178,7 @@ func newMergeOperation(t *testing.T, address sink.Address, incoming any, source 
 		t.Fatalf("sink.NewLuaProgram() error = %v", err)
 	}
 	options := sink.MergeOptions{
-		Incoming:            incoming,
+		Incoming:            documentForAddress(t, address, incoming),
 		Program:             program,
 		MissingDocumentMode: missing,
 	}
@@ -186,6 +187,23 @@ func newMergeOperation(t *testing.T, address sink.Address, incoming any, source 
 		t.Fatalf("sink.NewMerge() error = %v", err)
 	}
 	return operation
+}
+
+func documentForAddress(t *testing.T, address sink.Address, value any) sink.Document {
+	t.Helper()
+	document, err := newDocumentForAddress(address, value)
+	if err != nil {
+		t.Fatalf("sink.NewDocument() error = %v", err)
+	}
+	return document
+}
+
+func newDocumentForAddress(address sink.Address, value any) (sink.Document, error) {
+	encoding := sink.DocumentEncodingJSON
+	if strings.HasPrefix(address.Store(), "mongodb-") {
+		encoding = sink.DocumentEncodingBSON
+	}
+	return sink.NewDocument(value, encoding)
 }
 
 func assertWriteResults(t *testing.T, results []sink.WriteResult, status sink.WriteStatus) {

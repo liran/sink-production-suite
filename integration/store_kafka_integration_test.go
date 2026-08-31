@@ -23,15 +23,15 @@ func TestStoreKafkaRoutingAndSyncOnlyBehavior(t *testing.T) {
 	secondaryDocument := map[string]any{"store": "secondary"}
 	syncOnlyDocument := map[string]any{"store": "sync-only"}
 
-	primaryPut, err := sink.NewPut(primaryAddress, primaryDocument, sink.WriteUpsert)
+	primaryPut, err := sink.NewPut(primaryAddress, documentForAddress(t, primaryAddress, primaryDocument), sink.WriteUpsert)
 	if err != nil {
 		t.Fatalf("sink.NewPut(primary) error = %v", err)
 	}
-	secondaryPut, err := sink.NewPut(secondaryAddress, secondaryDocument, sink.WriteUpsert)
+	secondaryPut, err := sink.NewPut(secondaryAddress, documentForAddress(t, secondaryAddress, secondaryDocument), sink.WriteUpsert)
 	if err != nil {
 		t.Fatalf("sink.NewPut(secondary) error = %v", err)
 	}
-	syncOnlyAsyncPut, err := sink.NewPut(syncOnlyAddress, syncOnlyDocument, sink.WriteUpsert)
+	syncOnlyAsyncPut, err := sink.NewPut(syncOnlyAddress, documentForAddress(t, syncOnlyAddress, syncOnlyDocument), sink.WriteUpsert)
 	if err != nil {
 		t.Fatalf("sink.NewPut(sync-only async) error = %v", err)
 	}
@@ -72,7 +72,7 @@ func TestStoreKafkaRoutingAndSyncOnlyBehavior(t *testing.T) {
 	waitForDocumentFound(t, ctx, environment.client, secondaryAddress)
 	assertDocumentNotFound(t, ctx, environment.client, syncOnlyAddress)
 
-	syncOnlyPut, err := sink.NewPut(syncOnlyAddress, syncOnlyDocument, sink.WriteUpsert)
+	syncOnlyPut, err := sink.NewPut(syncOnlyAddress, documentForAddress(t, syncOnlyAddress, syncOnlyDocument), sink.WriteUpsert)
 	if err != nil {
 		t.Fatalf("sink.NewPut(sync-only synchronous) error = %v", err)
 	}
