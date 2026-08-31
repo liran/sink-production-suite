@@ -14,7 +14,8 @@ The suite verifies:
    model, including history limits, deduplication, timestamps, large integers,
    and replay behavior.
 2. The same programs produce equal documents through the public Go client,
-   multiple Sink server processes, and real storage backends.
+   multiple Sink server processes, and real storage backends, using explicit
+   JSON documents for search and BSON documents for MongoDB.
 3. Concurrent merges preserve every successful update while exercising real
    search-engine revision conflicts.
 4. Store-owned asynchronous routing works through two independent Kafka
@@ -22,7 +23,8 @@ The suite verifies:
 5. Stores without Kafka remain available synchronously and reject asynchronous
    requests as retryable unavailable results without publishing anything.
 6. MongoDB, Elasticsearch, and OpenSearch pass create, duplicate-create,
-   concurrent merge, asynchronous write/delete, and synchronous delete checks.
+   concurrent merge, asynchronous write/delete, and synchronous delete checks,
+   including distinct `json`/`bson` identity tags and native datetime types.
 7. Accepted Kafka mutations survive worker and broker restarts and retain
    same-record ordering.
 8. Active operations recover from controlled OpenSearch and Kafka restarts.

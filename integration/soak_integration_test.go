@@ -61,10 +61,10 @@ type soakCounters struct {
 }
 
 type soakDocument struct {
-	Value       string `json:"value"`
-	Counter     int64  `json:"counter"`
-	OperationID string `json:"operation_id"`
-	UpdatedAt   string `json:"updated_at,omitempty"`
+	Value       string    `json:"value" bson:"value"`
+	Counter     int64     `json:"counter" bson:"counter"`
+	OperationID string    `json:"operation_id" bson:"operation_id"`
+	UpdatedAt   time.Time `json:"updated_at,omitempty" bson:"updated_at,omitempty"`
 }
 
 type soakDocumentExpectation struct {
@@ -233,7 +233,11 @@ func runSoakCycle(ctx context.Context, opts soakCycleOptions) error {
 		Counter:     0,
 		OperationID: createOperationID,
 	}
-	put, err := sink.NewPut(address, document, sink.WriteUpsert)
+	encodedDocument, err := newDocumentForAddress(address, document)
+	if err != nil {
+		return fmt.Errorf("encode put document: %w", err)
+	}
+	put, err := sink.NewPut(address, encodedDocument, sink.WriteUpsert)
 	if err != nil {
 		return fmt.Errorf("create put: %w", err)
 	}
@@ -274,8 +278,12 @@ func runSoakCycle(ctx context.Context, opts soakCycleOptions) error {
 		"delta":        1,
 		"operation_id": mergeOperationID,
 	}
+	incomingDocument, err := newDocumentForAddress(address, incoming)
+	if err != nil {
+		return fmt.Errorf("encode merge document: %w", err)
+	}
 	mergeOptions := sink.MergeOptions{
-		Incoming:            incoming,
+		Incoming:            incomingDocument,
 		Program:             opts.program,
 		MissingDocumentMode: sink.MissingDocumentFail,
 	}

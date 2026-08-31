@@ -193,8 +193,12 @@ func newLoadTask(opts loadTaskOptions) (loadTask, error) {
 	if err != nil {
 		return task, fmt.Errorf("create load address: %w", err)
 	}
+	document, err := newDocumentForAddress(address, product)
+	if err != nil {
+		return task, fmt.Errorf("encode load document: %w", err)
+	}
 	mergeOptions := sink.MergeOptions{
-		Incoming:            product,
+		Incoming:            document,
 		Program:             opts.program,
 		MissingDocumentMode: sink.MissingDocumentCreate,
 	}

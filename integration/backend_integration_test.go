@@ -27,16 +27,19 @@ type backendStoreSpec struct {
 }
 
 type backendDocument struct {
-	Value     string `json:"value"`
-	Counter   int64  `json:"counter"`
-	UpdatedAt string `json:"updated_at,omitempty"`
+	UID       string    `json:"uid" bson:"_id"`
+	Value     string    `json:"value" bson:"value"`
+	Counter   int64     `json:"counter" bson:"counter"`
+	UpdatedAt time.Time `json:"updated_at,omitempty" bson:"updated_at,omitempty"`
 }
 
 type backendExpectation struct {
 	client      *sink.Client
 	address     sink.Address
+	wantUID     string
 	wantValue   string
 	wantCounter int64
+	wantUpdated bool
 }
 
 func TestConfiguredStorageBackendsThroughSink(t *testing.T) {
@@ -61,8 +64,8 @@ func testConfiguredBackend(t *testing.T, environment *testEnvironment, spec back
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	initial := backendDocument{Value: spec.name, Counter: 0}
-	create, err := sink.NewPut(address, initial, sink.WriteCreate)
+	initial := backendDocument{UID: "counter", Value: spec.name, Counter: 0}
+	create, err := sink.NewPut(address, documentForAddress(t, address, initial), sink.WriteCreate)
 	if err != nil {
 		t.Fatalf("sink.NewPut(create) error = %v", err)
 	}
@@ -74,6 +77,7 @@ func testConfiguredBackend(t *testing.T, environment *testEnvironment, spec back
 	initialExpectation := backendExpectation{
 		client:      environment.secondaryClient,
 		address:     address,
+		wantUID:     "counter",
 		wantValue:   spec.name,
 		wantCounter: 0,
 	}
@@ -92,6 +96,7 @@ func testConfiguredBackend(t *testing.T, environment *testEnvironment, spec back
 		t.Fatalf("sink.NewLuaProgram() error = %v", err)
 	}
 	const writers = 32
+	incomingDocument := documentForAddress(t, address, map[string]any{"delta": 1})
 	start := make(chan struct{})
 	errorsChannel := make(chan error, writers)
 	var waitGroup sync.WaitGroup
@@ -100,9 +105,8 @@ func testConfiguredBackend(t *testing.T, environment *testEnvironment, spec back
 		go func() {
 			defer waitGroup.Done()
 			<-start
-			incoming := map[string]any{"delta": 1}
 			mergeOptions := sink.MergeOptions{
-				Incoming:            incoming,
+				Incoming:            incomingDocument,
 				Program:             program,
 				MissingDocumentMode: sink.MissingDocumentFail,
 			}
@@ -139,14 +143,16 @@ func testConfiguredBackend(t *testing.T, environment *testEnvironment, spec back
 	mergedExpectation := backendExpectation{
 		client:      environment.client,
 		address:     address,
+		wantUID:     "counter",
 		wantValue:   spec.name,
 		wantCounter: writers,
+		wantUpdated: true,
 	}
 	assertBackendDocument(t, ctx, mergedExpectation)
 
 	asyncAddress := sinkAddressForStore(t, spec.name, dataset, "async")
-	asyncDocument := backendDocument{Value: "async", Counter: 7}
-	asyncPut, err := sink.NewPut(asyncAddress, asyncDocument, sink.WriteUpsert)
+	asyncDocument := backendDocument{UID: "async", Value: "async", Counter: 7}
+	asyncPut, err := sink.NewPut(asyncAddress, documentForAddress(t, asyncAddress, asyncDocument), sink.WriteUpsert)
 	if err != nil {
 		t.Fatalf("sink.NewPut(async) error = %v", err)
 	}
@@ -160,6 +166,7 @@ func testConfiguredBackend(t *testing.T, environment *testEnvironment, spec back
 		asyncExpectation := backendExpectation{
 			client:      environment.secondaryClient,
 			address:     asyncAddress,
+			wantUID:     "async",
 			wantValue:   "async",
 			wantCounter: 7,
 		}
@@ -206,17 +213,29 @@ func assertBackendDocument(
 	if len(results) != 1 || results[0].Status != sink.ReadFound {
 		t.Fatalf("Read(backend document) = %+v, want found", results)
 	}
+	wantEncoding := sink.DocumentEncodingJSON
+	if strings.HasPrefix(expectation.address.Store(), "mongodb-") {
+		wantEncoding = sink.DocumentEncodingBSON
+	}
+	if results[0].Document.Encoding() != wantEncoding {
+		t.Fatalf("backend document encoding = %s, want %s", results[0].Document.Encoding(), wantEncoding)
+	}
 	document := backendDocument{}
 	if err := results[0].Document.Decode(&document); err != nil {
 		t.Fatalf("Decode(backend document) error = %v", err)
 	}
-	if document.Value != expectation.wantValue || document.Counter != expectation.wantCounter {
+	if document.UID != expectation.wantUID || document.Value != expectation.wantValue ||
+		document.Counter != expectation.wantCounter {
 		t.Fatalf(
-			"backend document = %+v, want value=%q counter=%d",
+			"backend document = %+v, want uid=%q value=%q counter=%d",
 			document,
+			expectation.wantUID,
 			expectation.wantValue,
 			expectation.wantCounter,
 		)
+	}
+	if expectation.wantUpdated && document.UpdatedAt.IsZero() {
+		t.Fatalf("backend document updated_at = %s, want a typed time", document.UpdatedAt)
 	}
 }
 

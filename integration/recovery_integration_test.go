@@ -54,7 +54,7 @@ func publishRecoveryBacklog(t *testing.T, ctx context.Context, client *sink.Clie
 	base.UID = key
 	base.UIDs = []string{key}
 	base.Languages = []string{"base"}
-	put, err := sink.NewPut(address, base, sink.WriteUpsert)
+	put, err := sink.NewPut(address, documentForAddress(t, address, base), sink.WriteUpsert)
 	if err != nil {
 		t.Fatalf("sink.NewPut(recovery) error = %v", err)
 	}
