@@ -91,4 +91,13 @@ jobs:
       - name: Run public production qualification
         env:
           SINK_SERVER_DIR: ${{ github.workspace }}/sink-server
+          TMPDIR: ${{ runner.temp }}
         run: make -C suite test-production
+
+      - name: Upload qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: qualification-evidence
+          path: ${{ runner.temp }}/sink-qualification.*
+          retention-days: 14

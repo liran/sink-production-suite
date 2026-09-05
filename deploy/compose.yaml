@@ -1,7 +1,7 @@
 name: sink-production-suite
 
 x-sink-image: &sink-image
-  image: sink-production-qualification:local
+  image: ${SINK_SUITE_IMAGE:-sink-production-qualification:local}
   init: true
 
 services:
@@ -206,6 +206,8 @@ services:
       - /etc/sink/config.yaml
     volumes:
       - ./deploy/worker.yaml:/etc/sink/config.yaml:ro
+    ports:
+      - 127.0.0.1:19092:9090
     depends_on:
       mongodb-init:
         condition: service_completed_successfully
