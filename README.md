@@ -27,19 +27,34 @@ The suite verifies:
    including distinct `json`/`bson` identity tags and native datetime types.
 7. Accepted Kafka mutations survive worker and broker restarts and retain
    same-record ordering.
-8. Active operations recover from controlled OpenSearch and Kafka restarts.
+8. Active operations recover from a worker SIGKILL, a 45-second OpenSearch outage,
+   and a Kafka restart using the product worker retry default. Healthy stores
+   remain ready while the affected dependency fails readiness.
 9. A representative concurrent load completes without failed operations or
    exhausted merge-conflict retries.
-10. Every consumer group drains to zero lag and every dead-letter topic remains
-    empty.
+10. Every consumer group drains to zero lag and dead-letter topics remain empty
+    for ordinary traffic and temporary outages.
+11. The public API rejects oversized asynchronous mutations permanently, counts
+    repeated read keys across stores against one output budget, and rejects
+    expanded Lua aliases before changing stored data.
+12. An intentional permanent CREATE conflict does not suppress the next valid
+    update to the same key. The final recovery scenario inspects exactly one DLQ
+    record, repairs the conflict, replays it with the Sink CLI, reconciles the
+    stored business result, and verifies the original DLQ position is preserved.
 
-The six-hour durability test remains an explicit manual gate. Release
-qualification uses a bounded two-minute active-fault test so that every Sink
-release can be checked automatically on GitHub-hosted runners. An operation
-already in flight during the sequential restarts has a hard three-minute
-deadline to reconcile to its expected state. The disposable worker retry
-budget outlasts that window, and the gate still requires every dead-letter
-topic to remain empty.
+Release qualification uses a bounded three-minute active-fault workload with a
+three-minute deadline for each business cycle to reconcile. The fixture removes
+its former `max_retry_attempts: 30` override and exercises Sink's default retry
+rounds. Every normal-workload DLQ must remain empty before the deliberate
+permanent-error scenario runs. A successful replay does not delete DLQ records.
+
+The nightly/manual two-hour workflow uses this repository's same orchestration
+and assertions at higher concurrency. Each run retains exact suite/server
+revisions, resolved Compose configuration, test logs, fault timestamps, container
+resource samples, Prometheus samples, and DLQ inspect/replay reports for 14 days.
+The standalone script prints its local evidence directory even on failure.
+The two-hour run is separate from the release gate; a passing short run does not
+imply a completed long run or multi-node production certification.
 
 ## Infrastructure
 
@@ -82,7 +97,20 @@ Run the complete non-durability release gate:
 SINK_SERVER_DIR=/path/to/sink make test-production
 ```
 
-Run the optional durability test against an already running compatible
+Run the same backend, recovery, and reconciliation checks with two hours of
+active workload in disposable infrastructure:
+
+```bash
+SINK_SERVER_DIR=/path/to/sink make test-reliability
+```
+
+The nightly workflow lives in this repository. Sink can invoke it using the
+pinned reusable workflow and an explicit candidate revision. Standard release
+qualification can be tuned with `SINK_SOAK_DURATION`, `SINK_SOAK_CONCURRENCY`,
+`SINK_SOAK_MIN_CYCLES`, and `SINK_SOAK_TEST_TIMEOUT`; the default fault sequence
+needs at least three minutes of scheduled workload.
+
+Run the optional six-hour test against an already running compatible
 environment:
 
 ```bash
@@ -100,8 +128,12 @@ SINK_SOAK_MIN_CYCLES=10000 \
   -v
 ```
 
-All Compose resources and volumes are removed after each integration run,
-including failed runs.
+Each integration run uses a unique Compose project and image name and waits for
+`/readyz` on both servers and the worker before traffic. It removes only its own
+Compose resources and volumes after the run, including failures. Local runs need
+the documented fixed ports to be free; evidence files remain in the printed
+temporary directory. `go test ./...` remains independent of Docker and backends;
+real infrastructure tests require the `integration` build tag and the runner.
 
 ## Reusable release workflow
 
@@ -113,16 +145,23 @@ jobs:
     uses: liran/sink-production-suite/.github/workflows/release-qualification.yml@SUITE_COMMIT
     with:
       suite_ref: SUITE_COMMIT
-      sink_ref: v0.6.1
+      sink_ref: v0.9.0
 ```
 
 It runs race tests, lint, bounded stateful fuzzing, the seven-store backend
-matrix, controlled recovery, representative load, lag checks, and dead-letter
-checks without repository secrets. Use the same immutable suite commit for the
+matrix, capacity boundaries, controlled recovery, representative load, lag
+checks, and dead-letter inspection/repair/replay without repository secrets. Use the same immutable suite commit for the
 workflow reference and `suite_ref` so the workflow definition and test source
 cannot drift independently.
 
 ## Application semantics
+
+**The application owns business idempotence.** Sink provides at-least-once
+asynchronous delivery. The fault-soak workload carries an operation ID and
+reconciles persisted state; it does not claim Sink automatically deduplicates
+arbitrary business operations. Lua output guards are not a strict VM heap quota.
+Network partitions across fault domains, full disks, durable replica elections,
+and backup restoration still require deployment-specific qualification.
 
 The representative item and offer models intentionally contain bounded
 histories and realistic merge behavior. Replay is deterministic and preserves

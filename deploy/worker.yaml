@@ -1,5 +1,8 @@
 mode: worker
 
+prometheus:
+  address: ":9090"
+
 storages:
   - name: primary
     driver: opensearch
@@ -16,7 +19,6 @@ storages:
       topic_partitions: 8
       topic_replication_factor: 1
       max_poll_records: 500
-      max_retry_attempts: 30
       retry_backoff_milliseconds: 100
       max_retry_backoff_milliseconds: 10000
   - name: secondary
@@ -34,7 +36,6 @@ storages:
       topic_partitions: 8
       topic_replication_factor: 1
       max_poll_records: 500
-      max_retry_attempts: 30
       retry_backoff_milliseconds: 100
       max_retry_backoff_milliseconds: 10000
   - name: sync-only
@@ -62,7 +63,6 @@ storages:
       topic_partitions: 8
       topic_replication_factor: 1
       max_poll_records: 500
-      max_retry_attempts: 30
       retry_backoff_milliseconds: 100
       max_retry_backoff_milliseconds: 10000
   - name: mongodb-sync
@@ -89,7 +89,6 @@ storages:
       topic_partitions: 8
       topic_replication_factor: 1
       max_poll_records: 500
-      max_retry_attempts: 30
       retry_backoff_milliseconds: 100
       max_retry_backoff_milliseconds: 10000
 
