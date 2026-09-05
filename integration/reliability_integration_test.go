@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	sink "github.com/liran/sink-go"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func TestReliabilityRejectsOversizedAsyncMutation(t *testing.T) {
@@ -52,6 +53,15 @@ func TestReliabilityRejectsOversizedAsyncMutation(t *testing.T) {
 
 func TestReliabilityReadBudgetCountsRepeatedKeysAcrossStores(t *testing.T) {
 	environment := newTestEnvironment(t)
+	// Observe the first server response before the SDK retries failed entries.
+	retry := sink.RetryPolicy{MaxAttempts: 1}
+	clientOptions := sink.ClientOptions{ReadRetry: retry}
+	dialOptions := sink.DialOptions{Client: clientOptions, TransportCredentials: insecure.NewCredentials()}
+	firstAttempt, err := sink.Dial(environmentValue("SINK_ADDRESS", defaultSinkAddress), dialOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstAttempt.Close()
 	index := environment.createIndex(t, "read-budget")
 	ctx, cancel := context.WithTimeout(t.Context(), productionTestTimeout)
 	defer cancel()
@@ -66,7 +76,7 @@ func TestReliabilityReadBudgetCountsRepeatedKeysAcrossStores(t *testing.T) {
 			addresses[i] = secondary
 		}
 	}
-	results, err := environment.client.Read(ctx, addresses...)
+	results, err := firstAttempt.Read(ctx, addresses...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,8 +103,17 @@ func TestReliabilityReadBudgetCountsRepeatedKeysAcrossStores(t *testing.T) {
 	if found == 0 || exhausted == 0 {
 		t.Fatalf("read budget: found=%d exhausted=%d; expected bounded partial progress", found, exhausted)
 	}
-	// A smaller follow-up request must still read the persisted record.
-	waitForDocumentFound(t, ctx, environment.client, primary)
+	t.Logf("first response: %d found, %d retryable budget rejections", found, exhausted)
+	// The normal SDK retries only unresolved entries, eventually reading all.
+	results, err = environment.client.Read(ctx, addresses...)
+	if err != nil || len(results) != len(addresses) {
+		t.Fatalf("read with SDK retries: %d results, error=%v", len(results), err)
+	}
+	for i, result := range results {
+		if result.Status != sink.ReadFound || result.OperationIndex != i {
+			t.Fatalf("read with SDK retries result[%d] = %+v", i, result)
+		}
+	}
 }
 
 func TestReliabilityLuaAliasExpansionIsRejectedWithoutWriting(t *testing.T) {
