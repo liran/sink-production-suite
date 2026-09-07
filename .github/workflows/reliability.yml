@@ -53,11 +53,15 @@ jobs:
         env:
           TMPDIR: ${{ runner.temp }}
           SINK_SERVER_DIR: ${{ github.workspace }}/sink-server
+          SINK_STATE_SEED: ${{ github.run_id }}
+          SINK_STATE_STEPS: 4096
         run: make -C suite test-reliability
       - name: Upload fault and resource evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: reliability-evidence
-          path: ${{ runner.temp }}/sink-qualification.*
+          path: |
+            ${{ runner.temp }}/sink-qualification.*
+            ${{ runner.temp }}/sink-conformance.*
           retention-days: 14

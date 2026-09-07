@@ -8,6 +8,13 @@ credentials, or connect to an external Kubernetes cluster.
 
 ## Release gates
 
+Production incidents from Sink PRs 37 through 41 are now executable public-API
+contracts. The [incident matrix and reliability contract](docs/reliability-contract.md)
+explain each missed invariant, its deterministic oracle, historical pre-fix
+failure proof, configuration/model matrix and remaining qualification gaps.
+Integration, release and sustained runs start with `make test-conformance`;
+suite PRs also prove that the tests reject four historical broken candidates.
+
 The suite verifies:
 
 1. Representative item and offer merge programs match the public Go reference
@@ -41,6 +48,12 @@ The suite verifies:
     update to the same key. The final recovery scenario inspects exactly one DLQ
     record, repairs the conflict, replays it with the Sink CLI, reconciles the
     stored business result, and verifies the original DLQ position is preserved.
+13. Applied/visible completion, independent datasets, per-RPC budgets, real
+    revision conflicts, queued cancellation, formatted JSON and bounded hot-key
+    backend work satisfy the incident regressions with race detection.
+14. An independent Go operation model checks mixed Create/Upsert/Replace/Merge,
+    permanent failures, reordered/duplicate Reads and duplicate Deletes after
+    every RPC across batching configurations and all seven backend stores.
 
 Release qualification uses a bounded three-minute active-fault workload with a
 three-minute deadline for each business cycle to reconcile. The fixture removes

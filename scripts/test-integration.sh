@@ -128,7 +128,8 @@ SINK_ADDRESS=127.0.0.1:18080 \
 SINK_SECONDARY_ADDRESS=127.0.0.1:18081 \
 SINK_SEARCH_ENDPOINT=http://127.0.0.1:19200 \
 SINK_BACKEND_STORES="${backend_stores}" \
-	go test -tags=integration ./integration -run '^TestConfiguredStorageBackendsThroughSink$' -count=1 -timeout=10m
+	go test -tags=integration ./integration -run '^Test(ConfiguredStorageBackendsThroughSink|BackendOperationStateMachine)$' -count=1 -timeout=10m -json | tee "${artifacts}/backend-tests.jsonl"
+go run ./cmd/check-test-events --file "${artifacts}/backend-tests.jsonl" --require TestConfiguredStorageBackendsThroughSink,TestBackendOperationStateMachine
 
 "${compose[@]}" stop sink-worker
 recovery_suffix="$(date +%s)-$$"
