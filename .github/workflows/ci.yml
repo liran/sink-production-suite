@@ -119,6 +119,7 @@ jobs:
           cache: true
 
       - name: Fuzz Product and Offer state machines
+        shell: bash
         env:
           FUZZ_TIME: 30s
         run: make fuzz 2>&1 | tee "${{ runner.temp }}/stateful-fuzz.log"
