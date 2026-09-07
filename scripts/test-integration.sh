@@ -10,6 +10,13 @@ export SINK_SUITE_IMAGE="${project}:local"
 compose=(docker compose --env-file /dev/null --project-name "${project}" --project-directory "${suite_dir}" --file "${suite_dir}/deploy/compose.yaml")
 resilience_pid=""
 sampler_pid=""
+broker_paused=0
+fault_cycles="${SINK_FAULT_CYCLES:-1}"
+fault_interval="${SINK_FAULT_INTERVAL_SECONDS:-0}"
+if [[ ! "${fault_cycles}" =~ ^[0-9]+$ || "${fault_cycles}" -lt 1 || "${fault_cycles}" -gt 24 || ! "${fault_interval}" =~ ^[0-9]+$ || "${fault_interval}" -gt 3600 ]]; then
+  echo "fault cycles must be 1..24 and interval must be 0..3600 seconds" >&2
+  exit 1
+fi
 exec > >(tee "${artifacts}/test.log") 2>&1
 
 backend_stores="primary:async,secondary:async,sync-only:sync,elasticsearch-sync:sync,elasticsearch-async:async,mongodb-sync:sync,mongodb-async:async"
@@ -23,6 +30,12 @@ cleanup() {
 			wait "${process}" >/dev/null 2>&1 || true
 		fi
 	done
+	if [[ "${broker_paused}" == 1 ]]; then
+		"${compose[@]}" unpause kafka >/dev/null 2>&1 || true
+	fi
+	if [[ "${exit_code}" != 0 && -f "${artifacts}/soak.jsonl" ]]; then
+		tail -30 "${artifacts}/soak.jsonl"
+	fi
 	"${compose[@]}" ps --all > "${artifacts}/containers.txt" 2>&1 || true
 	"${compose[@]}" logs --no-color > "${artifacts}/containers.log" 2>&1 || true
 	"${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
@@ -46,6 +59,14 @@ wait_for_readiness() {
 			return 1
 		fi
 	done
+}
+
+run_checked_tests() {
+  local phase="$1"
+  local required="$2"
+  shift 2
+  go test -tags=integration ./integration -json -count=1 "$@" | tee "${artifacts}/${phase}.jsonl"
+  go run ./cmd/check-test-events --file "${artifacts}/${phase}.jsonl" --require "${required}"
 }
 
 record_fault() {
@@ -103,6 +124,8 @@ assert_empty_dlq() {
 
 git -C "${SINK_SERVER_DIR}" rev-parse HEAD > "${artifacts}/server-revision.txt"
 git -C "${suite_dir}" rev-parse HEAD > "${artifacts}/suite-revision.txt"
+git -C "${SINK_SERVER_DIR}" diff HEAD > "${artifacts}/server.patch"
+git -C "${suite_dir}" diff HEAD > "${artifacts}/suite.patch"
 "${compose[@]}" config > "${artifacts}/compose.yaml"
 go test ./contract ./internal/... -count=1
 "${compose[@]}" up --build --detach --wait --wait-timeout 180
@@ -122,14 +145,13 @@ sampler_pid="$!"
 SINK_ADDRESS=127.0.0.1:18080 \
 SINK_SECONDARY_ADDRESS=127.0.0.1:18081 \
 SINK_SEARCH_ENDPOINT=http://127.0.0.1:19200 \
-	go test -tags=integration ./integration -run 'Test(Product|Offer|Concurrent|Store|Reliability)' -v -count=1 -timeout=10m
+	run_checked_tests business-contract TestProductMergeMatchesReferenceThroughSinkAndOpenSearch,TestOfferMergeMatchesReferenceThroughSinkAndOpenSearch,TestConcurrentProductMergesAcrossSinkReplicasLoseNoSuccessfulUpdates,TestStoreKafkaRoutingAndSyncOnlyBehavior,TestReliabilityRejectsOversizedAsyncMutation,TestReliabilityReadBudgetCountsRepeatedKeysAcrossStores,TestReliabilityLuaAliasExpansionIsRejectedWithoutWriting -run '^Test(Product.*|Offer.*|Concurrent.*|StoreKafka.*|Reliability(Rejects.*|ReadBudget.*|LuaAlias.*))$' -timeout=10m
 
 SINK_ADDRESS=127.0.0.1:18080 \
 SINK_SECONDARY_ADDRESS=127.0.0.1:18081 \
 SINK_SEARCH_ENDPOINT=http://127.0.0.1:19200 \
 SINK_BACKEND_STORES="${backend_stores}" \
-	go test -tags=integration ./integration -run '^Test(ConfiguredStorageBackendsThroughSink|BackendOperationStateMachine)$' -count=1 -timeout=10m -json | tee "${artifacts}/backend-tests.jsonl"
-go run ./cmd/check-test-events --file "${artifacts}/backend-tests.jsonl" --require TestConfiguredStorageBackendsThroughSink,TestBackendOperationStateMachine
+	run_checked_tests backend-tests TestConfiguredStorageBackendsThroughSink,TestBackendOperationStateMachine -run '^Test(ConfiguredStorageBackendsThroughSink|BackendOperationStateMachine)$' -timeout=10m
 
 "${compose[@]}" stop sink-worker
 recovery_suffix="$(date +%s)-$$"
@@ -142,7 +164,7 @@ SINK_SEARCH_ENDPOINT=http://127.0.0.1:19200 \
 SINK_RECOVERY_PHASE=publish \
 SINK_RECOVERY_INDEX="${recovery_index}" \
 SINK_RECOVERY_KEY="${recovery_key}" \
-	go test -tags=integration ./integration -run TestKafkaBacklogSurvivesWorkerRestart -count=1 -timeout=5m
+	run_checked_tests recovery-publish TestKafkaBacklogSurvivesWorkerRestart -run '^TestKafkaBacklogSurvivesWorkerRestart$' -timeout=5m
 
 "${compose[@]}" restart kafka
 "${compose[@]}" up --detach --wait kafka
@@ -153,14 +175,14 @@ SINK_SEARCH_ENDPOINT=http://127.0.0.1:19200 \
 SINK_RECOVERY_PHASE=verify \
 SINK_RECOVERY_INDEX="${recovery_index}" \
 SINK_RECOVERY_KEY="${recovery_key}" \
-	go test -tags=integration ./integration -run TestKafkaBacklogSurvivesWorkerRestart -count=1 -timeout=5m
+	run_checked_tests recovery-verify TestKafkaBacklogSurvivesWorkerRestart -run '^TestKafkaBacklogSurvivesWorkerRestart$' -timeout=5m
 
 if [[ "${SINK_RUN_LOAD:-0}" == "1" ]]; then
 	SINK_ADDRESS=127.0.0.1:18080 \
 	SINK_SECONDARY_ADDRESS=127.0.0.1:18081 \
 	SINK_SEARCH_ENDPOINT=http://127.0.0.1:19200 \
 	SINK_RUN_LOAD=1 \
-		go test -tags=integration ./integration -run TestRepresentativeProductMergeLoad -count=1 -timeout=10m -v
+		run_checked_tests load TestRepresentativeProductMergeLoad -run '^TestRepresentativeProductMergeLoad$' -timeout=10m
 fi
 
 if [[ "${SINK_RUN_RESILIENCE:-0}" == "1" ]]; then
@@ -172,37 +194,56 @@ if [[ "${SINK_RUN_RESILIENCE:-0}" == "1" ]]; then
 	SINK_SOAK_DURATION="${SINK_SOAK_DURATION:-3m}" \
 	SINK_SOAK_CONCURRENCY="${SINK_SOAK_CONCURRENCY:-8}" \
 	SINK_SOAK_MIN_CYCLES="${SINK_SOAK_MIN_CYCLES:-100}" \
-		go test -tags=integration ./integration -run '^TestStorageBackendSoak$' -count=1 -timeout="${SINK_SOAK_TEST_TIMEOUT:-10m}" -v &
+		go test -tags=integration ./integration -json -count=1 -run '^TestStorageBackendSoak$' -timeout="${SINK_SOAK_TEST_TIMEOUT:-10m}" > "${artifacts}/soak.jsonl" &
 	resilience_pid="$!"
-	sleep 15
-	kill -0 "${resilience_pid}"
-	record_fault worker-sigkill
-	"${compose[@]}" kill --signal SIGKILL sink-worker
-	"${compose[@]}" up --detach sink-worker
-	sleep 15
-	kill -0 "${resilience_pid}"
-	record_fault opensearch-unavailable
-	"${compose[@]}" stop opensearch
-	# This exceeds the product's 20-second processing window and default
-	# retry round, while healthy stores must keep serving.
-	sleep 45
-	curl --max-time 5 --fail --silent http://127.0.0.1:19090/livez >/dev/null
-	curl --max-time 5 --fail --silent 'http://127.0.0.1:19090/readyz?service=sink.storage.mongodb-sync' >/dev/null
-	readiness_status="$(curl --max-time 5 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:19090/readyz)"
-	if [[ "${readiness_status}" != 503 ]]; then
-		echo "unavailable OpenSearch must fail dependency readiness: ${readiness_status}" >&2
-		exit 1
-	fi
-	record_fault opensearch-recovery
-	"${compose[@]}" start opensearch
-	"${compose[@]}" up --detach --wait --wait-timeout 180 opensearch
-	sleep 15
-	kill -0 "${resilience_pid}"
-	record_fault kafka-restart
-	"${compose[@]}" restart kafka
-	"${compose[@]}" up --detach --wait --wait-timeout 180 kafka
+	for cycle in $(seq 1 "${fault_cycles}"); do
+		record_fault "cycle-${cycle}-start"
+		sleep 15
+		kill -0 "${resilience_pid}"
+		record_fault worker-sigkill
+		"${compose[@]}" kill --signal SIGKILL sink-worker
+		"${compose[@]}" up --detach sink-worker
+		sleep 15
+		kill -0 "${resilience_pid}"
+		record_fault opensearch-unavailable
+		"${compose[@]}" stop opensearch
+		if (( cycle % 3 == 0 )); then
+			record_fault compound-kafka-unavailable
+			"${compose[@]}" pause kafka
+			broker_paused=1
+		fi
+		# This exceeds the product's 20-second processing window and default
+		# retry round, while healthy stores must keep serving.
+		sleep 45
+		curl --max-time 5 --fail --silent http://127.0.0.1:19090/livez >/dev/null
+		curl --max-time 5 --fail --silent 'http://127.0.0.1:19090/readyz?service=sink.storage.mongodb-sync' >/dev/null
+		readiness_status="$(curl --max-time 5 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:19090/readyz)"
+		if [[ "${readiness_status}" != 503 ]]; then
+			echo "unavailable OpenSearch must fail dependency readiness: ${readiness_status}" >&2
+			exit 1
+		fi
+		if (( cycle % 3 == 0 )); then
+			"${compose[@]}" unpause kafka
+			broker_paused=0
+			record_fault compound-kafka-recovery
+		fi
+		record_fault opensearch-recovery
+		"${compose[@]}" start opensearch
+		"${compose[@]}" up --detach --wait --wait-timeout 180 opensearch
+		sleep 15
+		kill -0 "${resilience_pid}"
+		record_fault kafka-restart
+		"${compose[@]}" restart kafka
+		"${compose[@]}" up --detach --wait --wait-timeout 180 kafka
+		record_fault "cycle-${cycle}-complete"
+		if [[ "${cycle}" -lt "${fault_cycles}" ]]; then
+			sleep "${fault_interval}"
+		fi
+	done
 	wait "${resilience_pid}"
 	resilience_pid=""
+	go run ./cmd/check-test-events --file "${artifacts}/soak.jsonl" --require TestStorageBackendSoak
+	cat "${artifacts}/soak.jsonl"
 	wait_for_readiness
 	record_fault all-dependencies-ready
 fi
@@ -244,7 +285,7 @@ export SINK_ADDRESS=127.0.0.1:18080
 export SINK_SECONDARY_ADDRESS=127.0.0.1:18081
 export SINK_SEARCH_ENDPOINT=http://127.0.0.1:19200
 export SINK_DLQ_INDEX="sink-dlq-$(date +%s)-$$"
-SINK_DLQ_PHASE=publish go test -tags=integration ./integration -run '^TestReliabilityDeadLetterRecovery$' -count=1 -timeout=3m -v
+SINK_DLQ_PHASE=publish run_checked_tests dlq-publish TestReliabilityDeadLetterRecovery -run '^TestReliabilityDeadLetterRecovery$' -timeout=3m
 wait_for_zero_group_lag kafka sink-production-workers
 "${compose[@]}" exec -T kafka /opt/kafka/bin/kafka-get-offsets.sh \
 	--bootstrap-server localhost:19092 --topic sink-production-mutations.dlq > "${artifacts}/dlq-offsets-before.txt"
@@ -258,10 +299,10 @@ export SINK_DLQ_INSPECT_REPORT="${artifacts}/dlq-inspect.jsonl"
 export SINK_DLQ_REPLAY_REPORT="${artifacts}/dlq-replay.jsonl"
 "${compose[@]}" exec -T sink-worker /usr/local/bin/sink dlq inspect \
 	--config /etc/sink/config.yaml --store primary --partition "${dlq_partition}" --offset 0 --count 1 > "${SINK_DLQ_INSPECT_REPORT}"
-SINK_DLQ_PHASE=repair go test -tags=integration ./integration -run '^TestReliabilityDeadLetterRecovery$' -count=1 -timeout=3m -v
+SINK_DLQ_PHASE=repair run_checked_tests dlq-repair TestReliabilityDeadLetterRecovery -run '^TestReliabilityDeadLetterRecovery$' -timeout=3m
 "${compose[@]}" exec -T sink-worker /usr/local/bin/sink dlq replay \
 	--config /etc/sink/config.yaml --store primary --partition "${dlq_partition}" --offset 0 --count 1 > "${SINK_DLQ_REPLAY_REPORT}"
-SINK_DLQ_PHASE=verify go test -tags=integration ./integration -run '^TestReliabilityDeadLetterRecovery$' -count=1 -timeout=3m -v
+SINK_DLQ_PHASE=verify run_checked_tests dlq-verify TestReliabilityDeadLetterRecovery -run '^TestReliabilityDeadLetterRecovery$' -timeout=3m
 wait_for_zero_group_lag kafka sink-production-workers
 "${compose[@]}" exec -T kafka /opt/kafka/bin/kafka-get-offsets.sh \
 	--bootstrap-server localhost:19092 --topic sink-production-mutations.dlq > "${artifacts}/dlq-offsets-after.txt"

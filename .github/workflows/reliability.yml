@@ -55,6 +55,8 @@ jobs:
           SINK_SERVER_DIR: ${{ github.workspace }}/sink-server
           SINK_STATE_SEED: ${{ github.run_id }}
           SINK_STATE_STEPS: 4096
+          SINK_HISTORY_ROUNDS: 128
+          SINK_SATURATION_ROUNDS: 64
         run: make -C suite test-reliability
       - name: Upload fault and resource evidence
         if: always()

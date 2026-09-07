@@ -43,8 +43,8 @@ go -C "${SINK_SERVER_DIR}" build -race -o "${SINK_SERVER_BINARY}" ./cmd/sink
 export SINK_CONFORMANCE_ELASTICSEARCH="http://$("${compose[@]}" port elasticsearch 9200)"
 export SINK_CONFORMANCE_OPENSEARCH="http://$("${compose[@]}" port opensearch 9200)"
 cd "${suite_dir}"
-go test -race -tags=integration ./conformance -count=1 -timeout=15m -json | tee "${SINK_CONFORMANCE_ARTIFACTS}/tests.jsonl"
-required_tests='TestHotKeyMergeAmplification,TestAppliedDoesNotInheritVisibleRefresh,TestCompletedDocumentReleasedBeforeSiblingRead,TestSuccessfulSiblingNotReplayedDuringConflict,TestVisibleDatasetsCompleteIndependently,TestReadBudgetsBelongToOriginalRPC,TestFormattedJSONBulkFraming,TestReplaceRechecksExistenceAfterConflict,TestQueuedCancellationDoesNotPoisonFollowingWrites,TestOperationStateMachine'
+go test -race -tags=integration ./conformance -count=1 -timeout=20m -json | tee "${SINK_CONFORMANCE_ARTIFACTS}/tests.jsonl"
+required_tests='TestHotKeyMergeAmplification,TestAppliedDoesNotInheritVisibleRefresh,TestCompletedDocumentReleasedBeforeSiblingRead,TestSuccessfulSiblingNotReplayedDuringConflict,TestVisibleDatasetsCompleteIndependently,TestReadBudgetsBelongToOriginalRPC,TestFormattedJSONBulkFraming,TestReplaceRechecksExistenceAfterConflict,TestQueuedCancellationDoesNotPoisonFollowingWrites,TestOperationStateMachine,TestSyncCrashBoundaries,TestLostBackendResponseDoesNotReplayMutation,TestCancellationAfterCommitRetainsState,TestAcceptedMutationCrashBoundaries,TestConcurrentHistories,TestSlowStoreSaturationIsBounded'
 go run ./cmd/check-test-events --file "${SINK_CONFORMANCE_ARTIFACTS}/tests.jsonl" --require "${required_tests}"
 if [[ "${SINK_PROVE_REGRESSIONS:-0}" == 1 ]]; then
   bash scripts/check-regression-sensitivity.sh
