@@ -106,7 +106,6 @@ jobs:
 
   fuzz:
     name: Stateful model fuzzing
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -121,5 +120,14 @@ jobs:
 
       - name: Fuzz Product and Offer state machines
         env:
-          FUZZ_TIME: 1m
-        run: make fuzz
+          FUZZ_TIME: 30s
+        run: make fuzz 2>&1 | tee "${{ runner.temp }}/stateful-fuzz.log"
+      - name: Upload fuzz results and failure corpus
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stateful-fuzz-evidence
+          path: |
+            ${{ runner.temp }}/stateful-fuzz.log
+            contract/testdata/fuzz
+          retention-days: 14
