@@ -14,6 +14,19 @@ PR CI did not run the public suite; release qualification ran only afterwards.
 
 ## Executable incident matrix
 
+The native-access extension also requires `TestReturnedChainReleasesIndependentPut`
+against both search engines: a held Merge snapshot must not prevent an independent
+Put from committing or releasing its key. Server-side real-Mongo tests also
+cover atomic native revision updates and cursor cleanup after cancellation.
+Sink does not provide write deduplication: application-owned idempotence remains
+required for retries and repeated asynchronous delivery across every backend.
+
+Pre-commit crash gates explicitly discard intercepted requests after killing the
+candidate. They never rely on HTTP disconnect notification arriving before a
+gate is released. `TestRequestGateDiscardPreventsLateForwarding` keeps the client
+connection alive and requires zero backend requests, then verifies normal traffic
+can resume. Both synchronous and Kafka crash tests use this boundary.
+
 | Incident | Public contract and oracle | Test |
 | --- | --- | --- |
 | [PR 37](https://github.com/liran/sink/pull/37): hot-key work amplification | 64 ordered merges use one snapshot and one conditional commit, share a committed revision, and persist counter=64 | `TestHotKeyMergeAmplification` |
@@ -130,6 +143,34 @@ MongoDB driver-level tests also distinguish environment errors and write-concern
 uncertainty from explicit document rejection, and reject invalid bulk-error
 indexes. This matrix qualifies Sink's reactions to storage failures; it does not
 qualify the database's own durability or recovery implementation.
+
+## Native access qualification (Sink PR #44)
+
+The suite pins the paired SDK merge `0c4cd2f9e375` and exercises public RPCs
+against the candidate executable. The new contracts are required by the same
+event checker as the incident regressions; missing and skipped tests fail.
+
+| Contract | Independent oracle |
+| --- | --- |
+| Query | Reverse-inserted known records, pages of 1/4/5/1000, exact and partial last pages, an extra empty page, ascending/descending ordering and include/exclude projections. Native pagination and presentation overrides are checked. |
+| Count | Known totals before pagination; MongoDB metadata estimates versus exact filtered/hinted/pipeline results; empty results; HTTP counts ignore collapse, aggregation and approximate-total requests. |
+| Scan | Every seeded record appears once across several batch sizes; native JSON hit identity and BSON fields survive; callback errors are preserved and already canceled contexts invoke no callbacks. |
+| Cursor ownership | A real HTTP continuation is held while the consumer cancels or a server idle/absolute deadline expires. Per-index open contexts reach zero, and the sole admission slot handles the next request while the gate remains held. |
+| Incomplete backend results | A proxy damages real pages with timeout, shard failure, missing hits, malformed JSON or approximate totals. Query/Count fail; a later Scan page fails after exactly one completed callback. No automatic retry is allowed, cursor cleanup completes and healthy requests recover. |
+| Native mutations | Execute changes a real document and retains native error payloads/status. Losing the actual increment response leaves exactly one increment and one backend attempt. |
+| Validation and limits | Raw gRPC bypasses SDK validation for managed query parameters, duplicate sorting, oversized pages/batches and asynchronous returned writes. Backend traces must contain no data requests. Oversized native responses fail without truncated output. |
+| Returned documents | Mixed returned/non-returned chains and concurrent writes through two servers return their own values and distinct revisions. Real CAS conflicts recompute against the competing writer. Failed Create returns no document. A shared response budget rejects the second commit; two coalesced RPCs retain independent budgets. |
+| Native MongoDB revision protection | Native writes change the revision observed through a second server. Unknown/destructive commands are rejected before execution; supported commands still retain native database errors. The server's MongoDB integration tests additionally hold a Merge snapshot while another service instance commits operator, replacement, or pipeline writes, then require a fresh snapshot and the combined committed value. |
+
+The backend contracts cover all seven configured stores. Deterministic HTTP
+faults, scan deadline/cursor observations, and constrained-budget cases cover
+both Elasticsearch and OpenSearch; they do not establish MongoDB cursor cleanup
+under network faults. A truncated or oversized initial search response can hide
+its scroll ID from Sink, so backend expiry remains the cleanup fallback in that
+case. The oversized Scan test checks its error and zero callbacks without
+claiming immediate cleanup. Pagination checks use quiescent fixtures and do not
+claim a snapshot across concurrent writes. Test datasets are synthetic and live
+only in the disposable qualification environment.
 
 ## Sustained fault qualification
 

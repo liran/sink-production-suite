@@ -56,7 +56,11 @@ func TestSyncCrashBoundaries(t *testing.T) {
 				}
 				server.crash(t)
 				if gate != nil {
-					gate.open()
+					if phase == "before-commit" {
+						gate.discard()
+					} else {
+						gate.open()
+					}
 					assertUnknownWrite(t, done)
 				}
 				restarted := startCandidate(t, opts)
