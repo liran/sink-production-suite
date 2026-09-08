@@ -16,15 +16,10 @@ PR CI did not run the public suite; release qualification ran only afterwards.
 
 The native-access extension also requires `TestReturnedChainReleasesIndependentPut`
 against both search engines: a held Merge snapshot must not prevent an independent
-Put from committing or releasing its key. `TestNativeBackendIdempotencyContract`
-qualifies the new protected RPC across all configured routes: MongoDB must replay
-the identical receipt through a second server and reject changed payloads;
-unsupported search routes must reject before mutation. The suite encodes the
-additive operation-ID field explicitly until the paired SDK is released.
-
-This is not a claim of idempotent search writes. Server-side real-Mongo tests
-add transaction rollback, commit/cancellation boundaries, concurrent first
-submission, lost acknowledgements, worker duplicate delivery and cursor cleanup.
+Put from committing or releasing its key. Server-side real-Mongo tests also
+cover atomic native revision updates and cursor cleanup after cancellation.
+Sink does not provide write deduplication: application-owned idempotence remains
+required for retries and repeated asynchronous delivery across every backend.
 
 Pre-commit crash gates explicitly discard intercepted requests after killing the
 candidate. They never rely on HTTP disconnect notification arriving before a
