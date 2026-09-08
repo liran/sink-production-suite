@@ -139,8 +139,9 @@ worker, stop OpenSearch for 45 seconds and restart Kafka; every third cycle also
 pauses Kafka during the storage outage. Cycles are separated by five minutes.
 The workload must remain alive throughout every fault cycle, followed by business
 reconciliation, drained groups, empty ordinary DLQs and explicit DLQ recovery.
-The ordinary production gate retains a shorter single-cycle workload. A short
-run is never evidence for the two-hour gate.
+This long run is reserved for scheduled or explicitly requested qualification.
+Routine changes and releases use the shorter single-cycle production gate and
+do not wait for a two-hour run. A short run is not evidence of sustained testing.
 
 ## Run and prove the gates
 
@@ -171,8 +172,9 @@ conformance gate against the candidate checkout; release and nightly workflow
 pins must be updated together. `Sink reliability gate` and `Suite reliability
 gate` run even when prerequisites fail or are skipped and require every
 prerequisite to pass. GitHub rules must require these statuses; adding a job does
-not itself change repository rules. Release binary/image publication also
-depends on sustained qualification of the release candidate.
+not itself change repository rules. Release binary/image publication requires
+the shorter public production qualification, independently of scheduled or
+explicitly requested sustained testing.
 
 To qualify another deployed OpenSearch version with the same assertions:
 
@@ -202,4 +204,4 @@ contract tests, not database certification requirements.
 The existing Kafka fault workload continues to check at-least-once delivery and
 business reconciliation, but does not establish exactly-once delivery or a
 general durable multi-node storage guarantee. Long runs need recorded successful
-evidence; a short run never substitutes for the two-hour gate.
+evidence; a short run cannot establish the results of sustained testing.
