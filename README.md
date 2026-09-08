@@ -54,6 +54,16 @@ The suite verifies:
 14. An independent Go operation model checks mixed Create/Upsert/Replace/Merge,
     permanent failures, reordered/duplicate Reads and duplicate Deletes after
     every RPC across batching configurations and all seven backend stores.
+15. PR #44's native Execute, Query, Count and Scan APIs run through the public
+    Dataset API on all seven stores: exact pagination, projections, count
+    strategies, native errors, BSON preservation and canceled scans.
+16. Damaged search pages and approximate totals fail without retries; canceled
+    and expired scans release backend cursors and admission slots. Lost native
+    mutation acknowledgements do not replay increments. Oversized responses and
+    invalid raw RPCs fail before exposing partial results or reaching storage.
+17. Returned writes report each operation's committed value and revision through
+    real conflicts and concurrent server replicas. Response budgets belong to
+    each original RPC and reject an oversized candidate before its commit.
 
 Release qualification uses a bounded three-minute active-fault workload with a
 three-minute deadline for each business cycle to reconcile. The fixture removes

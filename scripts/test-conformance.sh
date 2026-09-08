@@ -45,6 +45,9 @@ export SINK_CONFORMANCE_OPENSEARCH="http://$("${compose[@]}" port opensearch 920
 cd "${suite_dir}"
 go test -race -tags=integration ./conformance -count=1 -timeout=20m -json | tee "${SINK_CONFORMANCE_ARTIFACTS}/tests.jsonl"
 required_tests='TestHotKeyMergeAmplification,TestAppliedDoesNotInheritVisibleRefresh,TestCompletedDocumentReleasedBeforeSiblingRead,TestSuccessfulSiblingNotReplayedDuringConflict,TestVisibleDatasetsCompleteIndependently,TestReadBudgetsBelongToOriginalRPC,TestFormattedJSONBulkFraming,TestReplaceRechecksExistenceAfterConflict,TestQueuedCancellationDoesNotPoisonFollowingWrites,TestOperationStateMachine,TestSyncCrashBoundaries,TestLostBackendResponseDoesNotReplayMutation,TestCancellationAfterCommitRetainsState,TestAcceptedMutationCrashBoundaries,TestConcurrentHistories,TestSlowStoreSaturationIsBounded,TestWorkerRetainsStorageFailures'
+required_tests+=',TestNativeRejectsIncompleteBackendResults,TestNativeScanCancellationReleasesCursorAndAdmission,TestNativeExecuteLostResponseDoesNotReplay,TestReturnedWriteCommitAndConflictBoundaries,TestReturnedWriteBudgetsBelongToOriginalRPC,TestNativeResponseLimitsFailWithoutTruncation,TestNativeWireValidationBeforeExecution'
+required_tests+=',TestNativeScanDeadlinesReleaseResources'
+required_tests+=',TestReturnedChainReleasesIndependentPut'
 go run ./cmd/check-test-events --file "${SINK_CONFORMANCE_ARTIFACTS}/tests.jsonl" --require "${required_tests}"
 if [[ "${SINK_PROVE_REGRESSIONS:-0}" == 1 ]]; then
   bash scripts/check-regression-sensitivity.sh

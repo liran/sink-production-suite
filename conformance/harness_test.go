@@ -50,22 +50,25 @@ func searchBackends(t *testing.T) []backend {
 }
 
 type serverOptions struct {
-	backend   backend
-	unbatched bool
-	batchOps  int
-	batchWait int
-	readBytes int
-	worker    bool
-	broker    string
-	topic     string
-	capacity  int
-	queued    int
-	maxOps    int
-	secondary *backend
+	backend        backend
+	unbatched      bool
+	batchOps       int
+	batchWait      int
+	readBytes      int
+	worker         bool
+	broker         string
+	topic          string
+	capacity       int
+	queued         int
+	maxOps         int
+	secondary      *backend
+	requestTimeout int
+	scanTimeout    int
 }
 
 type candidate struct {
 	client  *sink.Client
+	address string
 	metrics string
 	command *exec.Cmd
 	done    <-chan error
@@ -92,6 +95,11 @@ func startCandidate(t *testing.T, opts serverOptions) *candidate {
 	if opts.worker {
 		mode = "worker"
 	}
+	// Historical sensitivity candidates predate the native scan option.
+	scanTimeoutConfig := ""
+	if opts.scanTimeout > 0 {
+		scanTimeoutConfig = fmt.Sprintf("  scan_timeout_seconds: %d\n", opts.scanTimeout)
+	}
 	config := fmt.Sprintf(`mode: %s
 grpc:
   address: %q
@@ -105,8 +113,8 @@ storages:
 %s
 %s
 service:
-  request_timeout_seconds: 20
-  max_read_bytes: %d
+  request_timeout_seconds: %d
+%s  max_read_bytes: %d
   max_operations: %d
   max_merge_attempts: 50
   max_in_flight_requests: %d
@@ -118,7 +126,7 @@ service:
     max_queued_operations: %d
 shutdown_timeout_seconds: 2
 `, mode, grpcAddress, metricsAddress, opts.backend.driver, opts.backend.endpoint,
-		candidateKafkaConfig(opts), candidateSecondaryConfig(opts), defaultInt(opts.readBytes, 32<<20), defaultInt(opts.maxOps, 1000),
+		candidateKafkaConfig(opts), candidateSecondaryConfig(opts), defaultInt(opts.requestTimeout, 20), scanTimeoutConfig, defaultInt(opts.readBytes, 32<<20), defaultInt(opts.maxOps, 1000),
 		defaultInt(opts.capacity*2, 128), defaultInt(opts.capacity, 32), !opts.unbatched,
 		defaultInt(opts.batchOps, 1000), defaultInt(opts.batchWait, 2), defaultInt(opts.queued, 10000))
 	configPath := filepath.Join(dir, "server.yaml")
@@ -141,7 +149,7 @@ shutdown_timeout_seconds: 2
 	}
 	done := make(chan error, 1)
 	go func() { done <- command.Wait() }()
-	server := &candidate{metrics: "http://" + metricsAddress + "/metrics", command: command, done: done}
+	server := &candidate{address: grpcAddress, metrics: "http://" + metricsAddress + "/metrics", command: command, done: done}
 	t.Cleanup(func() {
 		if !server.stopped {
 			_ = command.Process.Signal(os.Interrupt)

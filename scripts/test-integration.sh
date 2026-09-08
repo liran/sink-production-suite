@@ -151,7 +151,7 @@ SINK_ADDRESS=127.0.0.1:18080 \
 SINK_SECONDARY_ADDRESS=127.0.0.1:18081 \
 SINK_SEARCH_ENDPOINT=http://127.0.0.1:19200 \
 SINK_BACKEND_STORES="${backend_stores}" \
-	run_checked_tests backend-tests TestConfiguredStorageBackendsThroughSink,TestBackendOperationStateMachine -run '^Test(ConfiguredStorageBackendsThroughSink|BackendOperationStateMachine)$' -timeout=10m
+	run_checked_tests backend-tests TestConfiguredStorageBackendsThroughSink,TestBackendOperationStateMachine,TestNativeBackendQueryCountScan,TestNativeBackendExecute,TestNativeBackendReturnedWrites,TestNativeBackendIdempotencyContract -run '^Test(ConfiguredStorageBackendsThroughSink|BackendOperationStateMachine|NativeBackend.*)$' -timeout=10m
 
 "${compose[@]}" stop sink-worker
 recovery_suffix="$(date +%s)-$$"
