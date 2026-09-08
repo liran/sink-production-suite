@@ -13,7 +13,9 @@ prove_regression() {
   git -C "${SINK_SERVER_DIR}" archive "${revision}" -- cmd internal gen go.mod go.sum | tar -x -C "${directory}/source"
   go -C "${directory}/source" build -race -o "${directory}/sink" ./cmd/sink
   local result=0
-  local pattern="${test//\//$\/^}"
+  # Expanding the replacement separately also works with macOS Bash 3.2.
+  local separator='$/^'
+  local pattern="${test//\//$separator}"
   SINK_SERVER_BINARY="${directory}/sink" \
     go test -race -tags=integration ./conformance -run "^${pattern}$" -count=1 -timeout=2m -json > "${directory}/tests.jsonl" || result="$?"
   if [[ "${result}" == 0 ]]; then
