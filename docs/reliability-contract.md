@@ -25,6 +25,13 @@ PR CI did not run the public suite; release qualification ran only afterwards.
 | PR 41: completed RPC held by sibling conflict retry | A real conflicting writer changes the snapshot; successful RPC returns before retry is released, is never replayed, and retry recomputes the new value | `TestSuccessfulSiblingNotReplayedDuringConflict` |
 | PR 41: independent dataset inherits refresh wait | Fast visible dataset is searchable before manually refreshing the slow dataset; slow visible RPC stays pending until refresh | `TestVisibleDatasetsCompleteIndependently` |
 | Cancellation and admission regression class | Repeated cancellation while queued leaves no cancelled writes and does not poison following successful writes | `TestQueuedCancellationDoesNotPoisonFollowingWrites` |
+| Process crashes at commit/acknowledgement boundaries | Pre-commit work stays absent; committed state survives restart; an explicitly idempotent retry applies once | `TestSyncCrashBoundaries` |
+| Lost backend response after a non-idempotent commit | No false acknowledgement or internal replay; persisted counter and backend attempts stay one | `TestLostBackendResponseDoesNotReplayMutation` |
+| Cancellation after commit | Committed state remains and record execution capacity is released | `TestCancellationAfterCommitRetainsState` |
+| Worker crashes around backend/offset commits | Unresolved records replay, committed records do not replay, following records drain and ordinary DLQ stays empty | `TestAcceptedMutationCrashBoundaries` |
+| Concurrent operations | Three clients through two processes have a legal sequential explanation preserving real-time precedence | `TestConcurrentHistories` |
+| Slow store saturation | Excess work is rejected, healthy-store writes meet individual deadlines and cancellation releases reservations without applying pre-commit work | `TestSlowStoreSaturationIsBounded` |
+| Storage failure misclassified as a bad record | Real Kafka records survive whole-request failures, per-item errors, malformed responses and real index write blocks; only a confirmed invalid document reaches DLQ | `TestWorkerRetainsStorageFailures` |
 
 The conformance harness starts the candidate executable with its public YAML
 configuration, sends real gRPC requests with the public SDK, and uses actual
@@ -35,6 +42,16 @@ Queue metrics establish that callers overlap in the batching queue. Five-second
 deadlines bound failed assertions; the main oracle is progress while a dependency
 is deliberately held, not a microbenchmark timing threshold. Backend request
 counts establish amplification and retry scope independently of machine speed.
+
+Response gates consume the actual backend reply before holding or dropping it;
+the persisted document is independently read before a crash is injected. Child
+logs are checked for races even after intentional SIGKILL. Kafka boundary tests
+start a disposable Apache Kafka broker and inspect actual source/DLQ end offsets
+and committed group offsets. They retain the production 45-second client session
+timeout and 60-second rebalance window, allowing 75 seconds for replacement after
+SIGKILL. A following mutation must drain after every recovery. A broker pause
+also checks graceful shutdown, and the server's LeaveGroup response-loss
+regression must fail without the shutdown deadline fix.
 
 ## Independent operation model
 
@@ -59,9 +76,72 @@ for all profiles; two modes agreeing with each other is not enough.
 
 `SINK_STATE_SEED` and `SINK_STATE_STEPS` control the conformance sequence.
 Nightly runs use the workflow run ID as the seed and 4096 operations. A failure
-prints its seed and operation prefix so it can be replayed. Automatic shrinking,
-coverage-guided server-process fuzzing and a linearizability checker for arbitrary
-concurrent histories are still future work; this generator does not claim them.
+prints its seed and operation prefix so it can be replayed.
+
+## Concurrent histories and saturation
+
+`internal/historycheck` independently models integer-document Read, Upsert,
+Create, Replace, increment and Delete. It searches eligible orderings using
+invocation/return intervals and memoized states. Definite retryable CAS exhaustion
+is an aborted operation with no committed effect. Unknown results and transport
+errors fail the workload; they are never removed from its history. Empty or
+incomplete histories and exhausted search budgets fail closed. Deliberately
+corrupted histories test lost updates, double application, duplicate successful
+creates, stale reads, failed writes changing state and resurrection after Delete;
+legal overlapping histories must pass.
+
+The live workload checks ten-call histories from three clients and two server
+processes, with batching enabled, disabled and restricted to one operation, on
+both search engines. `SINK_STATE_SEED` controls generated operations;
+`SINK_HISTORY_ROUNDS` defaults to 24 and nightly runs use 128. Failed histories
+retain every invocation, response, client ID and operation as JSON. This is
+bounded, single-record, single-operation-RPC linearizability checking; it does not
+establish multi-record atomicity or check arbitrary uncertain, unbounded or async
+histories. Automatic shrinking and coverage-guided server-process fuzzing remain
+future work.
+
+Saturation tests hold two real executions, fill an eight-call queue and require
+all 56 excess calls to receive overload responses before cancellation. Eight
+healthy-store writes must each complete within one second during saturation.
+After cancellation, all execution and queue reservations return to zero and all
+66 pre-commit/rejected documents remain absent. Quiescent Go heap growth is
+limited to 64 MiB over baseline and goroutine growth to 80 for this fixture.
+`SINK_SATURATION_ROUNDS` defaults to six per backend; nightly runs use 64. These
+sampled thresholds are not strict Lua heap quotas or universal RSS guarantees.
+
+## Storage failure classification
+
+The public storage-failure matrix runs through the SDK, server, real Kafka,
+worker and Elasticsearch/OpenSearch adapters. It covers HTTP 400/401/403/404,
+408/413/429 and 500/502/503/504; per-item errors even under misleading 200/404/409
+statuses; truncated/partial bulk replies; failed or incomplete snapshot replies;
+and actual index write blocks. Each case exceeds two ten-attempt retry rounds
+with the fixture's 10..100ms backoff. During failure the pre-existing document
+must remain unchanged, source offsets must not advance, and DLQ must stay empty.
+After recovery, ordered following writes and a fresh increment must reconcile.
+A real mapping rejection separately proves that one bad document is quarantined
+with the correct source offset and its valid same-record successor completes.
+
+The worker retains unknown/missing/internal failure details. Search adapters
+classify whole-request failures as dependency failures and only quarantine
+explicit per-document mapping rejections. A retryable classification means keep
+the queued work; authentication and write blocks may require operator repair.
+MongoDB driver-level tests also distinguish environment errors and write-concern
+uncertainty from explicit document rejection, and reject invalid bulk-error
+indexes. This matrix qualifies Sink's reactions to storage failures; it does not
+qualify the database's own durability or recovery implementation.
+
+## Sustained fault qualification
+
+`make test-reliability` requires a full two-hour workload with 16 clients and at
+least 1,000 completed business cycles. Twelve fault cycles repeatedly kill the
+worker, stop OpenSearch for 45 seconds and restart Kafka; every third cycle also
+pauses Kafka during the storage outage. Cycles are separated by five minutes.
+The workload must remain alive throughout every fault cycle, followed by business
+reconciliation, drained groups, empty ordinary DLQs and explicit DLQ recovery.
+This long run is reserved for scheduled or explicitly requested qualification.
+Routine changes and releases use the shorter single-cycle production gate and
+do not wait for a two-hour run. A short run is not evidence of sustained testing.
 
 ## Run and prove the gates
 
@@ -72,7 +152,7 @@ SINK_SERVER_DIR=/path/to/sink make test-production
 ```
 
 The sensitivity gate first requires the current candidate to pass. It then
-builds four immutable pre-fix commits in separate temporary directories and
+builds six immutable pre-fix commits in separate temporary directories and
 requires the corresponding incident assertion to fail on Elasticsearch. A
 compilation error, missing dependency, skip or arbitrary nonzero exit is rejected
 as proof. This checks the tests themselves and runs on every suite PR.
@@ -85,11 +165,16 @@ runner removes only its own disposable Compose resources. Review local untracked
 source separately before calling a run reproducible from a commit.
 
 `check-test-events` rejects missing required tests, empty runs, skips and
-unfinished package/test results. The conformance gate is part of integration,
+unfinished package/test results in every integration phase, including recovery,
+load, soak and DLQ recovery. The conformance gate is part of integration,
 production and sustained qualification. Server PR CI runs the pinned suite's
 conformance gate against the candidate checkout; release and nightly workflow
-pins must be updated together. Merge enforcement also depends on repository
-rules requiring the CI status; adding a job does not itself change GitHub rules.
+pins must be updated together. `Sink reliability gate` and `Suite reliability
+gate` run even when prerequisites fail or are skipped and require every
+prerequisite to pass. GitHub rules must require these statuses; adding a job does
+not itself change repository rules. Release binary/image publication requires
+the shorter public production qualification, independently of scheduled or
+explicitly requested sustained testing.
 
 To qualify another deployed OpenSearch version with the same assertions:
 
@@ -109,11 +194,14 @@ must extend the matrix. Keep new minimized failure sequences as permanent tests.
 SQLite's [testing approach](https://sqlite.org/testing.html) combines independent
 harnesses, anomaly tests, fuzzing, optimization comparisons and test sensitivity.
 These changes adopt those practices for the incidents above; they do not certify
-SQLite-level reliability. Remaining qualification gaps include process crashes
-at every acknowledgement/commit boundary, reply loss after commit, arbitrary
-network partitions, disk exhaustion, replica elections, bounded memory under
-long slow-dependency saturation, compound recovery failures and restore tests.
+SQLite-level reliability. Remaining Sink-specific gaps include every individual
+Kafka acknowledgement boundary, generated malformed protocol responses, arbitrary
+network partitions, strict memory isolation for arbitrary scripts and broader
+combinations of dependency failures with rebalance and mixed permanent/transient
+records. Database elections, disk repair and backup implementation are outside
+Sink's responsibility; their observable failures should be translated into Sink
+contract tests, not database certification requirements.
 The existing Kafka fault workload continues to check at-least-once delivery and
 business reconciliation, but does not establish exactly-once delivery or a
 general durable multi-node storage guarantee. Long runs need recorded successful
-evidence; a short run never substitutes for the two-hour gate.
+evidence; a short run cannot establish the results of sustained testing.

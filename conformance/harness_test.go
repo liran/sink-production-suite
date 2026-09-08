@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -54,11 +55,21 @@ type serverOptions struct {
 	batchOps  int
 	batchWait int
 	readBytes int
+	worker    bool
+	broker    string
+	topic     string
+	capacity  int
+	queued    int
+	maxOps    int
+	secondary *backend
 }
 
 type candidate struct {
 	client  *sink.Client
 	metrics string
+	command *exec.Cmd
+	done    <-chan error
+	stopped bool
 }
 
 func startCandidate(t *testing.T, opts serverOptions) *candidate {
@@ -77,7 +88,11 @@ func startCandidate(t *testing.T, opts serverOptions) *candidate {
 			t.Fatal(err)
 		}
 	}
-	config := fmt.Sprintf(`mode: server
+	mode := "server"
+	if opts.worker {
+		mode = "worker"
+	}
+	config := fmt.Sprintf(`mode: %s
 grpc:
   address: %q
 prometheus:
@@ -87,16 +102,25 @@ storages:
     driver: %s
     search:
       endpoints: [%q]
+%s
+%s
 service:
   request_timeout_seconds: 20
   max_read_bytes: %d
+  max_operations: %d
+  max_merge_attempts: 50
+  max_in_flight_requests: %d
+  max_store_requests: %d
   batching:
     enabled: %t
     max_operations: %d
     max_wait_milliseconds: %d
+    max_queued_operations: %d
 shutdown_timeout_seconds: 2
-`, grpcAddress, metricsAddress, opts.backend.driver, opts.backend.endpoint,
-		defaultInt(opts.readBytes, 32<<20), !opts.unbatched, defaultInt(opts.batchOps, 1000), defaultInt(opts.batchWait, 2))
+`, mode, grpcAddress, metricsAddress, opts.backend.driver, opts.backend.endpoint,
+		candidateKafkaConfig(opts), candidateSecondaryConfig(opts), defaultInt(opts.readBytes, 32<<20), defaultInt(opts.maxOps, 1000),
+		defaultInt(opts.capacity*2, 128), defaultInt(opts.capacity, 32), !opts.unbatched,
+		defaultInt(opts.batchOps, 1000), defaultInt(opts.batchWait, 2), defaultInt(opts.queued, 10000))
 	configPath := filepath.Join(dir, "server.yaml")
 	if err := os.WriteFile(filepath.Join(dir, "test-name.txt"), []byte(t.Name()), 0600); err != nil {
 		t.Fatal(err)
@@ -117,24 +141,37 @@ shutdown_timeout_seconds: 2
 	}
 	done := make(chan error, 1)
 	go func() { done <- command.Wait() }()
+	server := &candidate{metrics: "http://" + metricsAddress + "/metrics", command: command, done: done}
 	t.Cleanup(func() {
-		_ = command.Process.Signal(os.Interrupt)
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Errorf("candidate exited unsuccessfully (including race detector failures): %v", err)
+		if !server.stopped {
+			_ = command.Process.Signal(os.Interrupt)
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Errorf("candidate exited unsuccessfully (including race detector failures): %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				_ = command.Process.Kill()
+				<-done
+				t.Error("candidate did not shut down within five seconds")
 			}
-		case <-time.After(5 * time.Second):
-			_ = command.Process.Kill()
-			<-done
-			t.Error("candidate did not shut down within five seconds")
 		}
 		log.Close()
+		contents, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Error(err)
+		}
+		if bytes.Contains(contents, []byte("WARNING: DATA RACE")) {
+			t.Error("candidate reported a data race, including before an intentional crash")
+		}
 		if t.Failed() {
-			contents, _ := os.ReadFile(logPath)
 			t.Logf("candidate log (%s):\n%s", logPath, contents)
 		}
 	})
+	if opts.worker {
+		server.waitReady(t)
+		return server
+	}
 	retry := sink.RetryPolicy{MaxAttempts: 1}
 	clientOptions := sink.ClientOptions{ReadRetry: retry}
 	dialOptions := sink.DialOptions{TransportCredentials: insecure.NewCredentials(), Client: clientOptions}
@@ -161,8 +198,105 @@ shutdown_timeout_seconds: 2
 		}
 	}
 	t.Logf("candidate config and log: %s", dir)
-	server := &candidate{client: client, metrics: "http://" + metricsAddress + "/metrics"}
+	server.client = client
+	server.waitReady(t)
 	return server
+}
+
+func (c *candidate) waitReady(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	endpoint := strings.TrimSuffix(c.metrics, "/metrics") + "/readyz"
+	var last string
+	for ctx.Err() == nil {
+		attempt, stop := context.WithTimeout(ctx, time.Second)
+		req, err := http.NewRequestWithContext(attempt, http.MethodGet, endpoint, nil)
+		if err != nil {
+			stop()
+			t.Fatal(err)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			body, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			last = fmt.Sprintf("HTTP %d %s %v", resp.StatusCode, body, readErr)
+			if resp.StatusCode == http.StatusOK && readErr == nil {
+				stop()
+				return
+			}
+		} else {
+			last = err.Error()
+		}
+		stop()
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("candidate dependencies did not become ready: %s", last)
+}
+
+func candidateKafkaConfig(opts serverOptions) string {
+	if opts.broker == "" {
+		return ""
+	}
+	return fmt.Sprintf(`    kafka:
+      enabled: true
+      brokers: [%q]
+      topic: %s
+      group_id: %s-workers
+      dead_letter_topic: %s.dlq
+      topic_partitions: 1
+      topic_replication_factor: 1
+      retry_backoff_milliseconds: 10
+      max_retry_backoff_milliseconds: 100
+`, opts.broker, opts.topic, opts.topic, opts.topic)
+}
+
+func candidateSecondaryConfig(opts serverOptions) string {
+	if opts.secondary == nil {
+		return ""
+	}
+	return fmt.Sprintf(`  - name: secondary
+    driver: %s
+    search:
+      endpoints: [%q]
+`, opts.secondary.driver, opts.secondary.endpoint)
+}
+
+func (c *candidate) crash(t *testing.T) {
+	t.Helper()
+	if c.stopped {
+		t.Fatal("candidate was already stopped")
+	}
+	if err := c.command.Process.Kill(); err != nil {
+		t.Fatalf("inject SIGKILL: %v", err)
+	}
+	select {
+	case err := <-c.done:
+		c.stopped = true
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ProcessState.String() != "signal: killed" {
+			t.Fatalf("candidate did not exit from the injected SIGKILL: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("candidate did not terminate after SIGKILL")
+	}
+	t.Log("injected candidate SIGKILL")
+}
+
+func (c *candidate) stop(t *testing.T) {
+	t.Helper()
+	if err := c.command.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-c.done:
+		c.stopped = true
+		if err != nil {
+			t.Fatalf("candidate graceful shutdown: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("candidate graceful shutdown exceeded five seconds")
+	}
 }
 
 func defaultInt(value, fallback int) int {
@@ -346,22 +480,26 @@ func (c *candidate) waitQueued(t *testing.T, method string) {
 }
 
 type requestGate struct {
-	path    string
-	key     string
-	nth     int
-	seen    int
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
+	path     string
+	key      string
+	nth      int
+	seen     int
+	entered  chan struct{}
+	release  chan struct{}
+	once     sync.Once
+	response bool
+	drop     bool
 }
 
 func (g *requestGate) open() { g.once.Do(func() { close(g.release) }) }
 
 type observedRequest struct {
-	Time time.Time
-	Test string
-	Path string
-	Body string
+	Time   time.Time
+	Test   string
+	Path   string
+	Body   string
+	Phase  string
+	Status int
 }
 
 type backendProxy struct {
@@ -392,7 +530,7 @@ func proxyBackend(t *testing.T, store backend) *backendProxy {
 		observed.requests = append(observed.requests, event)
 		var held []*requestGate
 		for _, gate := range observed.gates {
-			if r.URL.Path == gate.path && bytes.Contains(body, []byte(strconv.Quote(gate.key))) {
+			if !gate.response && r.URL.Path == gate.path && bytes.Contains(body, []byte(strconv.Quote(gate.key))) {
 				gate.seen++
 				if gate.seen == gate.nth {
 					held = append(held, gate)
@@ -408,8 +546,65 @@ func proxyBackend(t *testing.T, store backend) *backendProxy {
 				return
 			}
 		}
+		// Attach the request bytes so a response gate can select the same key
+		// after the real backend has completed the request.
+		requestKey := responseRequestKey{}
+		r = r.WithContext(context.WithValue(r.Context(), requestKey, body))
 		proxy.ServeHTTP(w, r)
 	})
+	proxy.ModifyResponse = func(response *http.Response) error {
+		requestKey := responseRequestKey{}
+		body, _ := response.Request.Context().Value(requestKey).([]byte)
+		observed.mu.Lock()
+		var held []*requestGate
+		for _, gate := range observed.gates {
+			if gate.response && response.Request.URL.Path == gate.path && bytes.Contains(body, []byte(strconv.Quote(gate.key))) {
+				gate.seen++
+				if gate.seen == gate.nth {
+					held = append(held, gate)
+				}
+			}
+		}
+		observed.mu.Unlock()
+		if len(held) == 0 {
+			return nil
+		}
+		payload, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil {
+			return err
+		}
+		response.Body = io.NopCloser(bytes.NewReader(payload))
+		observed.mu.Lock()
+		event := observedRequest{Time: time.Now().UTC(), Test: t.Name(), Path: response.Request.URL.RequestURI(),
+			Body: string(payload), Phase: "backend-response", Status: response.StatusCode}
+		observed.requests = append(observed.requests, event)
+		observed.mu.Unlock()
+		for _, gate := range held {
+			close(gate.entered)
+			select {
+			case <-gate.release:
+			case <-response.Request.Context().Done():
+				return response.Request.Context().Err()
+			}
+			if gate.drop {
+				return errDropResponse
+			}
+		}
+		return nil
+	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		if errors.Is(err, errDropResponse) {
+			connection, _, hijackErr := w.(http.Hijacker).Hijack()
+			if hijackErr != nil {
+				t.Errorf("drop backend response: %v", hijackErr)
+				return
+			}
+			connection.Close()
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadGateway)
+	}
 	server := httptest.NewServer(handler)
 	observed.backend = store
 	observed.backend.endpoint = server.URL
@@ -435,6 +630,19 @@ func proxyBackend(t *testing.T, store backend) *backendProxy {
 	return observed
 }
 
+type responseRequestKey struct{}
+
+var errDropResponse = errors.New("injected response loss after backend completion")
+
+func (p *backendProxy) holdResponse(path, key string, drop bool) *requestGate {
+	gate := &requestGate{path: path, key: key, nth: 1, response: true, drop: drop,
+		entered: make(chan struct{}), release: make(chan struct{})}
+	p.mu.Lock()
+	p.gates = append(p.gates, gate)
+	p.mu.Unlock()
+	return gate
+}
+
 func (p *backendProxy) hold(path, key string, nth int) *requestGate {
 	gate := &requestGate{path: path, key: key, nth: nth, entered: make(chan struct{}), release: make(chan struct{})}
 	p.mu.Lock()
@@ -457,7 +665,7 @@ func (p *backendProxy) count(path, key string) int {
 	defer p.mu.Unlock()
 	count := 0
 	for _, req := range p.requests {
-		if strings.Split(req.Path, "?")[0] == path {
+		if req.Phase == "" && strings.Split(req.Path, "?")[0] == path {
 			count += strings.Count(req.Body, `"_id":`+strconv.Quote(key))
 		}
 	}

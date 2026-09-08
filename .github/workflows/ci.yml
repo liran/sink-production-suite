@@ -17,6 +17,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  reliability-gate:
+    name: Suite reliability gate
+    if: always()
+    needs: [resolve-server, test, production, sensitivity, fuzz]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every qualification job to pass
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: jq -e 'to_entries | length > 0 and all(.[]; .value.result == "success")' <<< "$RESULTS"
+
+  resolve-server:
+    name: Resolve Sink candidate
+    runs-on: ubuntu-latest
+    outputs:
+      revision: ${{ steps.resolve.outputs.revision }}
+    steps:
+      - name: Resolve matching server branch or main to an immutable commit
+        id: resolve
+        env:
+          CANDIDATE_REF: ${{ github.head_ref || github.ref_name }}
+        run: |
+          remote=https://github.com/liran/sink.git
+          revision=$(git ls-remote --heads "$remote" "refs/heads/$CANDIDATE_REF" | awk '{print $1}')
+          if [[ -z "$revision" ]]; then
+            revision=$(git ls-remote --exit-code --heads "$remote" refs/heads/main | awk '{print $1}')
+          fi
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "Sink candidate: $revision"
+
   test:
     name: Contract, race, and lint
     runs-on: ubuntu-latest
@@ -38,6 +69,7 @@ jobs:
 
   production:
     name: Public backend qualification
+    needs: resolve-server
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -49,7 +81,7 @@ jobs:
         with:
           repository: liran/sink
           path: sink-server
-          ref: main
+          ref: ${{ needs.resolve-server.outputs.revision }}
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -75,8 +107,9 @@ jobs:
 
   sensitivity:
     name: Historical regression sensitivity
+    needs: resolve-server
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Check out suite
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -85,7 +118,7 @@ jobs:
         with:
           repository: liran/sink
           path: sink-server
-          ref: main
+          ref: ${{ needs.resolve-server.outputs.revision }}
           fetch-depth: 0
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
