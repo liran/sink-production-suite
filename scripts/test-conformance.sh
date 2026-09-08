@@ -48,6 +48,7 @@ required_tests='TestHotKeyMergeAmplification,TestAppliedDoesNotInheritVisibleRef
 required_tests+=',TestNativeRejectsIncompleteBackendResults,TestNativeScanCancellationReleasesCursorAndAdmission,TestNativeExecuteLostResponseDoesNotReplay,TestReturnedWriteCommitAndConflictBoundaries,TestReturnedWriteBudgetsBelongToOriginalRPC,TestNativeResponseLimitsFailWithoutTruncation,TestNativeWireValidationBeforeExecution'
 required_tests+=',TestNativeScanDeadlinesReleaseResources'
 required_tests+=',TestReturnedChainReleasesIndependentPut'
+required_tests+=',TestRequestGateDiscardPreventsLateForwarding'
 go run ./cmd/check-test-events --file "${SINK_CONFORMANCE_ARTIFACTS}/tests.jsonl" --require "${required_tests}"
 if [[ "${SINK_PROVE_REGRESSIONS:-0}" == 1 ]]; then
   bash scripts/check-regression-sensitivity.sh

@@ -133,7 +133,12 @@ func TestAcceptedMutationCrashBoundaries(t *testing.T) {
 				}
 				worker.crash(t)
 				if gate != nil {
-					gate.open()
+					if phase == "before-commit" {
+						gate.discard()
+						assertAbsent(t, publisher.client, address)
+					} else {
+						gate.open()
+					}
 				}
 				startCandidate(t, opts)
 				// A following accepted record proves the replacement owns and

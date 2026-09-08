@@ -488,18 +488,26 @@ func (c *candidate) waitQueued(t *testing.T, method string) {
 }
 
 type requestGate struct {
-	path     string
-	key      string
-	nth      int
-	seen     int
-	entered  chan struct{}
-	release  chan struct{}
-	once     sync.Once
-	response bool
-	drop     bool
+	path      string
+	key       string
+	nth       int
+	seen      int
+	entered   chan struct{}
+	release   chan struct{}
+	once      sync.Once
+	response  bool
+	drop      bool
+	discarded bool
 }
 
 func (g *requestGate) open() { g.once.Do(func() { close(g.release) }) }
+
+func (g *requestGate) discard() {
+	g.once.Do(func() {
+		g.discarded = true
+		close(g.release)
+	})
+}
 
 type observedRequest struct {
 	Time   time.Time
@@ -551,6 +559,10 @@ func proxyBackend(t *testing.T, store backend) *backendProxy {
 			select {
 			case <-gate.release:
 			case <-r.Context().Done():
+				return
+			}
+			if gate.discarded {
+				http.Error(w, "injected request loss before backend commit", http.StatusServiceUnavailable)
 				return
 			}
 		}

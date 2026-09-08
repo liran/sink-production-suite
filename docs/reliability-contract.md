@@ -26,6 +26,12 @@ This is not a claim of idempotent search writes. Server-side real-Mongo tests
 add transaction rollback, commit/cancellation boundaries, concurrent first
 submission, lost acknowledgements, worker duplicate delivery and cursor cleanup.
 
+Pre-commit crash gates explicitly discard intercepted requests after killing the
+candidate. They never rely on HTTP disconnect notification arriving before a
+gate is released. `TestRequestGateDiscardPreventsLateForwarding` keeps the client
+connection alive and requires zero backend requests, then verifies normal traffic
+can resume. Both synchronous and Kafka crash tests use this boundary.
+
 | Incident | Public contract and oracle | Test |
 | --- | --- | --- |
 | [PR 37](https://github.com/liran/sink/pull/37): hot-key work amplification | 64 ordered merges use one snapshot and one conditional commit, share a committed revision, and persist counter=64 | `TestHotKeyMergeAmplification` |
