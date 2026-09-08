@@ -30,3 +30,5 @@ prove_regression before-pr38 b9133f460187027c0a85de506aade3b4ed9b9c19 TestApplie
 prove_regression before-pr40 cee5dd559dacd3333a5b9ca46f71ae9125bd1cc3 TestReadBudgetsBelongToOriginalRPC/elasticsearch "one valid read consumed another RPC's budget"
 prove_regression before-pr41 d67d1a716d9929f9557039a7eabfa270cb680519 TestCompletedDocumentReleasedBeforeSiblingRead/elasticsearch 'independent operation did not complete'
 prove_regression before-bounded-shutdown 04fe67f5008ca04492bf06a802d84f9651b3e4d4 TestAcceptedMutationCrashBoundaries/shutdown-during-broker-outage 'candidate graceful shutdown exceeded five seconds'
+
+prove_regression before-storage-failure-classification de700a3d847a91dda508f562fb052b5ff109e4f2 TestWorkerRetainsStorageFailures/elasticsearch/http-401/write 'dependency failure moved records to DLQ'
