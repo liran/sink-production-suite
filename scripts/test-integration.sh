@@ -5,6 +5,13 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 suite_dir="$(cd "${script_dir}/.." && pwd)"
 export SINK_SERVER_DIR="${SINK_SERVER_DIR:-${suite_dir}/../sink}"
 artifacts="$(mktemp -d "${TMPDIR:-/tmp}/sink-qualification.XXXXXXXX")"
+suite_go_flags=()
+if [[ -n "${SINK_GO_DIR:-}" ]]; then
+  cp "${suite_dir}/go.mod" "${artifacts}/suite.go.mod"
+  cp "${suite_dir}/go.sum" "${artifacts}/suite.go.sum"
+  go mod edit -modfile="${artifacts}/suite.go.mod" -replace="github.com/liran/sink-go=${SINK_GO_DIR}"
+  suite_go_flags+=("-modfile=${artifacts}/suite.go.mod")
+fi
 project="sink-qualification-$(date +%s)-$$"
 export SINK_SUITE_IMAGE="${project}:local"
 compose=(docker compose --env-file /dev/null --project-name "${project}" --project-directory "${suite_dir}" --file "${suite_dir}/deploy/compose.yaml")
@@ -65,7 +72,7 @@ run_checked_tests() {
   local phase="$1"
   local required="$2"
   shift 2
-  go test -tags=integration ./integration -json -count=1 "$@" | tee "${artifacts}/${phase}.jsonl"
+  go test "${suite_go_flags[@]}" -tags=integration ./integration -json -count=1 "$@" | tee "${artifacts}/${phase}.jsonl"
   go run ./cmd/check-test-events --file "${artifacts}/${phase}.jsonl" --require "${required}"
 }
 
@@ -127,7 +134,7 @@ git -C "${suite_dir}" rev-parse HEAD > "${artifacts}/suite-revision.txt"
 git -C "${SINK_SERVER_DIR}" diff HEAD > "${artifacts}/server.patch"
 git -C "${suite_dir}" diff HEAD > "${artifacts}/suite.patch"
 "${compose[@]}" config > "${artifacts}/compose.yaml"
-go test ./contract ./internal/... -count=1
+go test "${suite_go_flags[@]}" ./contract ./internal/... -count=1
 "${compose[@]}" up --build --detach --wait --wait-timeout 180
 wait_for_readiness
 (
@@ -194,7 +201,7 @@ if [[ "${SINK_RUN_RESILIENCE:-0}" == "1" ]]; then
 	SINK_SOAK_DURATION="${SINK_SOAK_DURATION:-3m}" \
 	SINK_SOAK_CONCURRENCY="${SINK_SOAK_CONCURRENCY:-8}" \
 	SINK_SOAK_MIN_CYCLES="${SINK_SOAK_MIN_CYCLES:-100}" \
-		go test -tags=integration ./integration -json -count=1 -run '^TestStorageBackendSoak$' -timeout="${SINK_SOAK_TEST_TIMEOUT:-10m}" > "${artifacts}/soak.jsonl" &
+		go test "${suite_go_flags[@]}" -tags=integration ./integration -json -count=1 -run '^TestStorageBackendSoak$' -timeout="${SINK_SOAK_TEST_TIMEOUT:-10m}" > "${artifacts}/soak.jsonl" &
 	resilience_pid="$!"
 	for cycle in $(seq 1 "${fault_cycles}"); do
 		record_fault "cycle-${cycle}-start"

@@ -27,7 +27,7 @@ import (
 
 func nativeSearch(index string) sink.Command {
 	command := sink.Command{Store: "primary", Method: http.MethodPost, Path: "/" + index + "/_search",
-		ContentType: "application/json", Payload: []byte(`{"query":{"match_all":{}}}`)}
+		ContentType: "application/json", Payload: []byte(`{"query":{"match_all":{}},"sort":[{"counter":"asc"}]}`)}
 	return command
 }
 
@@ -123,9 +123,6 @@ func TestNativeRejectsIncompleteBackendResults(t *testing.T) {
 					}
 					t.Run(method+"/"+mode, func(t *testing.T) {
 						fault := &nativeResponseFault{path: command.Path, mode: mode}
-						if method == "Scan" {
-							fault.path = "/_search/scroll"
-						}
 						proxy.seen.Store(0)
 						proxy.fault.Store(fault)
 						t.Cleanup(func() { proxy.fault.Store(nil) })
@@ -149,11 +146,12 @@ func TestNativeRejectsIncompleteBackendResults(t *testing.T) {
 							}
 						case "Scan":
 							req := sink.ScanRequest{Command: command, BatchSize: 1}
-							calls := 0
-							err = server.client.Scan(ctx, req, func(sink.Document) error { calls++; return nil })
-							if calls != 1 {
-								t.Fatalf("partial scan replayed or delivered damaged results: %d callbacks", calls)
+							var result sink.ScanResponse
+							result, err = server.client.Scan(ctx, req)
+							if len(result.Documents) != 0 || len(result.NextCursor) != 0 {
+								t.Fatal("failed Scan exposed a partial page")
 							}
+
 						}
 						if status.Code(err) != codes.Internal || proxy.seen.Load() != 1 {
 							t.Fatalf("damaged response must fail once without retry: attempts=%d, %v", proxy.seen.Load(), err)
@@ -202,48 +200,48 @@ func assertNoSearchCursors(t *testing.T, store backend, index string) {
 
 func TestNativeScanCancellationReleasesCursorAndAdmission(t *testing.T) {
 	for _, store := range searchBackends(t) {
-		for _, callbackFailure := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/callback=%t", store.driver, callbackFailure), func(t *testing.T) {
-				index := indexFor(t, store, "100ms")
-				proxy := proxyBackend(t, store)
-				opts := serverOptions{backend: proxy.backend, capacity: 1}
-				server := startCandidate(t, opts)
-				for i := range 3 {
-					address := addressFor(t, index, fmt.Sprint(i))
-					operation := put(t, address, `{"counter":1}`, sink.WriteCreate)
-					applied(t, writeAsync(t.Context(), server.client, sink.CompletionWaitUntilVisible, operation), 1)
-				}
-				gate := proxy.hold("/_search/scroll", "scroll", 1)
-				t.Cleanup(gate.open)
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				stop := errors.New("intentional consumer failure")
-				command := nativeSearch(index)
-				req := sink.ScanRequest{Command: command, BatchSize: 1}
-				calls := 0
-				err := server.client.Scan(ctx, req, func(sink.Document) error {
-					calls++
-					gate.wait(t)
-					if callbackFailure {
-						return stop
-					}
-					cancel()
-					return nil
-				})
-				if calls != 1 || (callbackFailure && !errors.Is(err, stop)) || (!callbackFailure && status.Code(err) != codes.Canceled) {
-					t.Fatalf("scan cancellation: calls=%d, %v", calls, err)
-				}
-				assertNoSearchCursors(t, store, index)
-				// The sole store admission slot must be reusable while the gate stays held.
-				count := sink.CountRequest{Command: command}
-				deadline, stopCount := context.WithTimeout(t.Context(), 3*time.Second)
-				defer stopCount()
-				result, err := server.client.Count(deadline, count)
-				if err != nil || result.Count != 3 {
-					t.Fatalf("canceled scan retained admission: %+v, %v", result, err)
-				}
-			})
-		}
+		t.Run(store.driver, func(t *testing.T) {
+			index := indexFor(t, store, "100ms")
+			proxy := proxyBackend(t, store)
+			opts := serverOptions{backend: proxy.backend, capacity: 1}
+			server := startCandidate(t, opts)
+			for i := range 3 {
+				address := addressFor(t, index, fmt.Sprint(i))
+				operation := put(t, address, fmt.Sprintf(`{"counter":%d}`, i), sink.WriteCreate)
+				applied(t, writeAsync(t.Context(), server.client, sink.CompletionWaitUntilVisible, operation), 1)
+			}
+			command := nativeSearch(index)
+			req := sink.ScanRequest{Command: command, BatchSize: 1}
+			gate := proxy.hold(command.Path, "search_after", 1)
+			t.Cleanup(gate.open)
+			first, err := server.client.Scan(t.Context(), req)
+			if err != nil || len(first.NextCursor) == 0 {
+				t.Fatalf("first=%+v err=%v", first, err)
+			}
+			req.Cursor = first.NextCursor
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { _, err := server.client.Scan(ctx, req); done <- err }()
+			gate.wait(t)
+			cancel()
+			if err := <-done; status.Code(err) != codes.Canceled {
+				t.Fatalf("cancel=%v", err)
+			}
+			assertNoSearchCursors(t, store, index)
+			count := sink.CountRequest{Command: command}
+			deadline, stopCount := context.WithTimeout(t.Context(), 3*time.Second)
+			defer stopCount()
+			result, err := server.client.Count(deadline, count)
+			if err != nil || result.Count != 3 {
+				t.Fatalf("canceled scan retained admission: %+v, %v", result, err)
+			}
+			gate.open()
+			page, err := server.client.Scan(t.Context(), req)
+			if err != nil || len(page.Documents) != 1 {
+				t.Fatalf("cancellation invalidated checkpoint: %+v %v", page, err)
+			}
+		})
 	}
 }
 
@@ -288,39 +286,32 @@ func TestNativeExecuteLostResponseDoesNotReplay(t *testing.T) {
 
 func TestNativeScanDeadlinesReleaseResources(t *testing.T) {
 	for _, store := range searchBackends(t) {
-		for _, absolute := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/absolute=%t", store.driver, absolute), func(t *testing.T) {
-				index := indexFor(t, store, "100ms")
-				proxy := proxyBackend(t, store)
-				opts := serverOptions{backend: proxy.backend, capacity: 1, requestTimeout: 1, scanTimeout: 20}
-				if absolute {
-					opts.requestTimeout, opts.scanTimeout = 20, 1
-				}
-				server := startCandidate(t, opts)
-				address := addressFor(t, index, "deadline")
-				operation := put(t, address, `{"counter":1}`, sink.WriteCreate)
-				applied(t, writeAsync(t.Context(), server.client, sink.CompletionWaitUntilVisible, operation), 1)
-				gate := proxy.hold("/_search/scroll", "scroll", 1)
-				t.Cleanup(gate.open)
-				command := nativeSearch(index)
-				req := sink.ScanRequest{Command: command, BatchSize: 1}
-				// A longer client deadline prevents it from masking the server limit.
-				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-				defer cancel()
-				calls := 0
-				err := server.client.Scan(ctx, req, func(sink.Document) error { calls++; return nil })
-				gate.wait(t)
-				if status.Code(err) != codes.DeadlineExceeded || ctx.Err() != nil || calls != 1 {
-					t.Fatalf("server scan deadline did not terminate partial scan: callbacks=%d client=%v error=%v", calls, ctx.Err(), err)
-				}
-				assertNoSearchCursors(t, store, index)
-				count := sink.CountRequest{Command: command}
-				result, err := server.client.Count(t.Context(), count)
-				if err != nil || result.Count != 1 {
-					t.Fatalf("scan deadline retained resources: %+v, %v", result, err)
-				}
-			})
-		}
+		t.Run(store.driver, func(t *testing.T) {
+			index := indexFor(t, store, "100ms")
+			proxy := proxyBackend(t, store)
+			opts := serverOptions{backend: proxy.backend, capacity: 1, requestTimeout: 1}
+			server := startCandidate(t, opts)
+			address := addressFor(t, index, "deadline")
+			operation := put(t, address, `{"counter":1}`, sink.WriteCreate)
+			applied(t, writeAsync(t.Context(), server.client, sink.CompletionWaitUntilVisible, operation), 1)
+			command := nativeSearch(index)
+			gate := proxy.hold(command.Path, "sort", 1)
+			t.Cleanup(gate.open)
+			req := sink.ScanRequest{Command: command, BatchSize: 1}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			page, err := server.client.Scan(ctx, req)
+			gate.wait(t)
+			if status.Code(err) != codes.DeadlineExceeded || ctx.Err() != nil || len(page.Documents) != 0 || len(page.NextCursor) != 0 {
+				t.Fatalf("server deadline: page=%+v client=%v error=%v", page, ctx.Err(), err)
+			}
+			assertNoSearchCursors(t, store, index)
+			count := sink.CountRequest{Command: command}
+			result, err := server.client.Count(t.Context(), count)
+			if err != nil || result.Count != 1 {
+				t.Fatalf("deadline retained resources: %+v %v", result, err)
+			}
+		})
 	}
 }
 
@@ -410,15 +401,13 @@ func TestNativeResponseLimitsFailWithoutTruncation(t *testing.T) {
 			if status.Code(err) != codes.ResourceExhausted || response.Success || len(response.Payload) != 0 {
 				t.Fatalf("oversized Execute returned a truncated body: %+v, %v", response, err)
 			}
-			// Query has no cursor. Scan's complete HTTP response cap can prevent
-			// decoding an initial scroll ID, so oversized Scan cleanup relies on
-			// backend expiry; only assert its public error and zero callbacks here.
 			scan := sink.ScanRequest{Command: command, BatchSize: 1}
-			calls := 0
-			err = server.client.Scan(t.Context(), scan, func(sink.Document) error { calls++; return nil })
-			if status.Code(err) != codes.ResourceExhausted || calls != 0 {
-				t.Fatalf("oversized Scan delivered a partial document: calls=%d, %v", calls, err)
+			scanPage, err := server.client.Scan(t.Context(), scan)
+			if status.Code(err) != codes.ResourceExhausted || len(scanPage.Documents) != 0 || len(scanPage.NextCursor) != 0 {
+				t.Fatalf("oversized Scan returned a partial page: %+v %v", scanPage, err)
 			}
+			assertNoSearchCursors(t, store, index)
+
 			count := sink.CountRequest{Command: command}
 			result, err := server.client.Count(t.Context(), count)
 			if err != nil || result.Count != 1 || result.Estimated {
@@ -457,10 +446,7 @@ func TestNativeWireValidationBeforeExecution(t *testing.T) {
 				t.Fatalf("server accepted duplicate sort: %v", err)
 			}
 			scan := &sinkv1.ScanRequest{Command: command, BatchSize: 1001}
-			stream, err := client.Scan(t.Context(), scan)
-			if err == nil {
-				_, err = stream.Recv()
-			}
+			_, err = client.Scan(t.Context(), scan)
 			if status.Code(err) != codes.InvalidArgument {
 				t.Fatalf("server accepted oversized scan batch: %v", err)
 			}
