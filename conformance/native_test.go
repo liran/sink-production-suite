@@ -72,6 +72,14 @@ func nativeResponses(t *testing.T, store backend) *nativeResponseProxy {
 			body["timed_out"] = true
 		case "failed-shard":
 			body["_shards"] = map[string]int{"failed": 1}
+		case "missing-timeout":
+			delete(body, "timed_out")
+		case "missing-shards":
+			delete(body, "_shards")
+		case "incomplete-shards":
+			body["_shards"] = map[string]int{"total": 2, "successful": 1, "failed": 0}
+		case "skipped-cluster":
+			body["_clusters"] = map[string]int{"total": 2, "successful": 1, "skipped": 1}
 		case "missing-hits":
 			delete(body, "hits")
 		case "approximate-count":
@@ -117,7 +125,7 @@ func TestNativeRejectsIncompleteBackendResults(t *testing.T) {
 			}
 			command := nativeSearch(index)
 			for _, method := range []string{"Query", "Count", "Scan"} {
-				for _, mode := range []string{"timed-out", "failed-shard", "missing-hits", "malformed", "approximate-count"} {
+				for _, mode := range []string{"timed-out", "failed-shard", "missing-timeout", "missing-shards", "incomplete-shards", "skipped-cluster", "missing-hits", "malformed", "approximate-count"} {
 					if mode == "approximate-count" && method != "Count" {
 						continue
 					}

@@ -34,3 +34,5 @@ prove_regression before-pr41 d67d1a716d9929f9557039a7eabfa270cb680519 TestComple
 prove_regression before-bounded-shutdown 04fe67f5008ca04492bf06a802d84f9651b3e4d4 TestAcceptedMutationCrashBoundaries/shutdown-during-broker-outage 'candidate graceful shutdown exceeded five seconds'
 
 prove_regression before-storage-failure-classification de700a3d847a91dda508f562fb052b5ff109e4f2 TestWorkerRetainsStorageFailures/elasticsearch/http-401/write 'dependency failure moved records to DLQ'
+
+prove_regression before-native-completion-validation 878b24894b6476c8b30771e83bbd73f6ccfcdaaf TestNativeRejectsIncompleteBackendResults/elasticsearch/Query/missing-timeout 'failed Query exposed an apparently valid page'

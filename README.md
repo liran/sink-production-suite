@@ -13,7 +13,7 @@ contracts. The [incident matrix and reliability contract](docs/reliability-contr
 explain each missed invariant, its deterministic oracle, historical pre-fix
 failure proof, configuration/model matrix and remaining qualification gaps.
 Integration, release and sustained runs start with `make test-conformance`;
-suite PRs also prove that the tests reject four historical broken candidates.
+suite PRs also prove that the tests reject seven historical broken candidates.
 
 The suite verifies:
 
@@ -67,6 +67,14 @@ The suite verifies:
 18. Paged Scan resumes from the last processed cursor after graceful server exit
     or SIGKILL, including a lost page response. Cursors have no expiry and hold no
     backend session between pages; scans observe live data rather than a snapshot.
+19. Ascending and descending scans continue through record deletion, insertion
+    before/after a checkpoint and updates to unseen records on all seven stores.
+    Alternating server replicas, changing page sizes, retrying a saved checkpoint,
+    cancellation and cursor corruption preserve the expected remaining records.
+20. Missing timeout/shard completion evidence and inconsistent shard counts fail
+    Query, Count and Scan without exposing partial output. MongoDB Query rejects
+    partial shard results; unordered native writes preserve successful siblings
+    while returning the original native error for a failed member.
 
 Release qualification uses a bounded three-minute active-fault workload with a
 three-minute deadline for each business cycle to reconcile. The fixture removes
@@ -110,6 +118,12 @@ Run unit, race, and lint gates:
 make test-race
 make lint
 ```
+
+`make fuzz` requires the Go fuzzer to finish baseline replay and start generating
+mutations. Go can otherwise report PASS after spending the entire time budget
+loading cached inputs. If the gate reports no mutation-based fuzzing, increase
+`FUZZ_TIME` above the three-minute default, for example `FUZZ_TIME=5m make fuzz`. Each invocation retains its
+log in the printed evidence directory; `FUZZ_PARALLEL` controls workers.
 
 Run the backend matrix without load or active fault injection:
 

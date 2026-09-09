@@ -59,7 +59,7 @@ jobs:
 
       - name: Run bounded stateful fuzzing
         env:
-          FUZZ_TIME: 30s
+          FUZZ_TIME: 180s
         run: make -C suite fuzz
 
   backends:

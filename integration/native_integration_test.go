@@ -356,6 +356,23 @@ func TestNativeBackendExecute(t *testing.T) {
 			if err := result.Decode(&reply); err != nil || reply["code"] == nil || reply["errmsg"] == nil {
 				t.Fatalf("MongoDB error fields missing: %v, %v", reply, err)
 			}
+			duplicate := bson.D{{Key: "_id", Value: "record-00"}}
+			following := bson.D{{Key: "_id", Value: "partial-batch-success"}, {Key: "counter", Value: int64(7)}}
+			insert := bson.D{{Key: "insert", Value: ""}, {Key: "documents", Value: bson.A{duplicate, following}}, {Key: "ordered", Value: false}}
+			req.Command = f.command(t, insert, "")
+			result, err = f.dataset.Execute(t.Context(), req)
+			if !errors.As(err, &nativeError) || result.Success || bson.Raw(result.Payload).Lookup("writeErrors").Type != bson.TypeArray {
+				t.Fatalf("partial MongoDB write lost its native error: %s err=%v", bson.Raw(result.Payload), err)
+			}
+			persisted, err := f.dataset.Read(t.Context(), sink.StringKey("partial-batch-success"))
+			if err != nil || len(persisted) != 1 || persisted[0].Status != sink.ReadFound {
+				t.Fatalf("unordered batch lost its successful sibling: %+v err=%v", persisted, err)
+			}
+			find := bson.D{{Key: "find", Value: ""}, {Key: "allowPartialResults", Value: true}}
+			partial := sink.QueryRequest{Command: f.command(t, find, ""), PageSize: 1}
+			if _, err := f.dataset.Query(t.Context(), partial); status.Code(err) != codes.InvalidArgument {
+				t.Fatalf("Query permitted incomplete shard results: %v", err)
+			}
 			for _, name := range []string{"find", "aggregate", "listIndexes", "getMore", "killCursors", "startSession", "commitTransaction", "drop", "dropDatabase", "renameCollection", "sinkQualificationUnknownCommand"} {
 				document := bson.D{{Key: name, Value: ""}}
 				req.Command = f.command(t, document, "")
