@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/iceisfun/golua v1.1.1
-	github.com/liran/sink-go v0.4.1-0.20260908132017-0c4cd2f9e375
+	github.com/liran/sink-go v0.4.1-0.20260909050935-91fd66561c64
 	github.com/twmb/franz-go v1.21.6
 	github.com/twmb/franz-go/pkg/kadm v1.18.0
 	go.mongodb.org/mongo-driver/v2 v2.8.2

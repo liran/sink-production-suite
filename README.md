@@ -58,12 +58,15 @@ The suite verifies:
     Dataset API on all seven stores: exact pagination, projections, count
     strategies, native errors, BSON preservation and canceled scans.
 16. Damaged search pages and approximate totals fail without retries; canceled
-    and expired scans release backend cursors and admission slots. Lost native
+    and timed-out Scan requests release backend resources and admission slots. Lost native
     mutation acknowledgements do not replay increments. Oversized responses and
     invalid raw RPCs fail before exposing partial results or reaching storage.
 17. Returned writes report each operation's committed value and revision through
     real conflicts and concurrent server replicas. Response budgets belong to
     each original RPC and reject an oversized candidate before its commit.
+18. Paged Scan resumes from the last processed cursor after graceful server exit
+    or SIGKILL, including a lost page response. Cursors have no expiry and hold no
+    backend session between pages; scans observe live data rather than a snapshot.
 
 Release qualification uses a bounded three-minute active-fault workload with a
 three-minute deadline for each business cycle to reconcile. The fixture removes
@@ -113,6 +116,15 @@ Run the backend matrix without load or active fault injection:
 ```bash
 SINK_SERVER_DIR=/path/to/sink make test-integration
 ```
+
+For unreleased Scan protocol changes, run conformance against matching local
+server and Go client checkouts. The SDK replacement uses a temporary module file:
+
+```bash
+SINK_SERVER_DIR=/path/to/sink SINK_GO_DIR=/path/to/sink-go make test-conformance
+```
+
+The same `SINK_GO_DIR` option applies to the integration and production runners.
 
 Run the complete non-durability release gate:
 

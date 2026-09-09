@@ -235,11 +235,11 @@ func TestNativeBackendQueryCountScan(t *testing.T) {
 					document := bson.D{{Key: "aggregate", Value: ""}, {Key: "pipeline", Value: pipeline}}
 					command := f.command(t, document, "")
 					scan := sink.ScanRequest{Command: command, BatchSize: 1}
-					calls := 0
-					err := f.dataset.Scan(t.Context(), scan, func(sink.Document) error { calls++; return nil })
-					if status.Code(err) != codes.InvalidArgument || calls != 0 {
-						t.Fatalf("Scan accepted writing stage %s: calls=%d, %v", stage, calls, err)
+					page, err := f.dataset.Scan(t.Context(), scan)
+					if status.Code(err) != codes.InvalidArgument || len(page.Documents) != 0 {
+						t.Fatalf("Scan accepted writing stage %s: %+v %v", stage, page, err)
 					}
+
 					query := sink.QueryRequest{Command: command}
 					_, err = f.dataset.Query(t.Context(), query)
 					if status.Code(err) != codes.InvalidArgument {
@@ -266,42 +266,47 @@ func TestNativeBackendQueryCountScan(t *testing.T) {
 		t.Run("scan-pages-and-cancellation", func(t *testing.T) {
 			for _, size := range []int{1, 5, 1000} {
 				req := sink.ScanRequest{BatchSize: size}
+				if !f.bson {
+					req.Command.Payload = []byte(`{"sort":[{"counter":"asc"}]}`)
+				}
 				var counters []int64
-				err := f.dataset.Scan(t.Context(), req, func(document sink.Document) error {
-					value := f.decode(t, document)
-					if value.Value != "retained" || value.UpdatedAt.IsZero() {
-						t.Fatalf("scan corrupted native document: %+v", value)
+				for {
+					page, err := f.dataset.Scan(t.Context(), req)
+					if err != nil {
+						t.Fatal(err)
 					}
-					counters = append(counters, value.Counter)
-					return nil
-				})
+					for _, document := range page.Documents {
+						value := f.decode(t, document)
+						if value.Value != "retained" || value.UpdatedAt.IsZero() {
+							t.Fatalf("scan corrupted document: %+v", value)
+						}
+						counters = append(counters, value.Counter)
+					}
+					if len(page.NextCursor) == 0 {
+						break
+					}
+					req.Cursor = page.NextCursor
+				}
 				slices.Sort(counters)
 				want := []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
-				if err != nil || !slices.Equal(counters, want) {
-					t.Fatalf("scan size=%d: %v, %v", size, counters, err)
-				}
-			}
-			stop := errors.New("consumer stopped after first document")
-			for range 3 {
-				calls := 0
-				req := sink.ScanRequest{BatchSize: 1}
-				err := f.dataset.Scan(t.Context(), req, func(sink.Document) error { calls++; return stop })
-				if !errors.Is(err, stop) || calls != 1 {
-					t.Fatalf("callback failure was lost or replayed: calls=%d, %v", calls, err)
+				if !slices.Equal(counters, want) {
+					t.Fatalf("scan size=%d: %v", size, counters)
 				}
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
-			calls := 0
 			req := sink.ScanRequest{}
-			err := f.dataset.Scan(ctx, req, func(sink.Document) error { calls++; return nil })
-			if status.Code(err) != codes.Canceled || calls != 0 {
-				t.Fatalf("canceled scan: calls=%d, %v", calls, err)
+			if !f.bson {
+				req.Command.Payload = []byte(`{"sort":[{"counter":"asc"}]}`)
+			}
+			page, err := f.dataset.Scan(ctx, req)
+			if status.Code(err) != codes.Canceled || len(page.Documents) != 0 {
+				t.Fatalf("canceled scan: %+v %v", page, err)
 			}
 			count := sink.CountRequest{}
 			result, err := f.dataset.Count(t.Context(), count)
 			if err != nil || result.Count != 12 {
-				t.Fatalf("native operations did not recover after cancellation: %+v, %v", result, err)
+				t.Fatalf("operations did not recover: %+v %v", result, err)
 			}
 		})
 	})
