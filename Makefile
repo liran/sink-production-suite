@@ -1,7 +1,7 @@
 .PHONY: test test-race fuzz test-integration test-production test-reliability test-conformance test-regression-sensitivity lint
 
 STATICCHECK_VERSION := v0.8.1
-FUZZ_TIME ?= 30s
+FUZZ_TIME ?= 180s
 
 test:
 	go test ./... -count=1
@@ -10,8 +10,8 @@ test-race:
 	go test -race ./... -count=1
 
 fuzz:
-	go test ./contract -run='^$$' -fuzz=FuzzProductMergeSequence -fuzztime=$(FUZZ_TIME)
-	go test ./contract -run='^$$' -fuzz=FuzzOfferMergeSequence -fuzztime=$(FUZZ_TIME)
+	FUZZ_TIME=$(FUZZ_TIME) bash scripts/test-fuzz.sh FuzzProductMergeSequence
+	FUZZ_TIME=$(FUZZ_TIME) bash scripts/test-fuzz.sh FuzzOfferMergeSequence
 
 test-conformance:
 	bash scripts/test-conformance.sh

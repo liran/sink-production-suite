@@ -154,7 +154,7 @@ jobs:
       - name: Fuzz Product and Offer state machines
         shell: bash
         env:
-          FUZZ_TIME: 30s
+          FUZZ_TIME: 180s
         run: make fuzz 2>&1 | tee "${{ runner.temp }}/stateful-fuzz.log"
       - name: Upload fuzz results and failure corpus
         if: always()
