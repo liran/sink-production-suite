@@ -146,7 +146,7 @@ qualify the database's own durability or recovery implementation.
 
 ## Native access qualification (Sink PR #44)
 
-The suite pins the paired SDK merge `0c4cd2f9e375` and exercises public RPCs
+The suite pins its paired SDK in `go.mod` and exercises public RPCs
 against the candidate executable. The new contracts are required by the same
 event checker as the incident regressions; missing and skipped tests fail.
 
@@ -155,21 +155,24 @@ event checker as the incident regressions; missing and skipped tests fail.
 | Query | Reverse-inserted known records, pages of 1/4/5/1000, exact and partial last pages, an extra empty page, ascending/descending ordering and include/exclude projections. Native pagination and presentation overrides are checked. |
 | Count | Known totals before pagination; MongoDB metadata estimates versus exact filtered/hinted/pipeline results; empty results; HTTP counts ignore collapse, aggregation and approximate-total requests. |
 | Scan | Every seeded record appears once across several batch sizes; native JSON hit identity and BSON fields survive; callback errors are preserved and already canceled contexts invoke no callbacks. |
-| Cursor ownership | A real HTTP continuation is held while the consumer cancels or a server idle/absolute deadline expires. Per-index open contexts reach zero, and the sole admission slot handles the next request while the gate remains held. |
-| Incomplete backend results | A proxy damages real pages with timeout, shard failure, missing hits, malformed JSON or approximate totals. Query/Count fail; a later Scan page fails after exactly one completed callback. No automatic retry is allowed, cursor cleanup completes and healthy requests recover. |
+| Cursor ownership | A real Scan page response is held while the caller cancels or the per-request deadline expires. Per-index open contexts reach zero, and the sole admission slot handles the next request while the gate remains held. No backend session is retained between pages. |
+| Incomplete backend results | A proxy damages real pages with timeout, shard failure, missing timeout/shard metadata, inconsistent shard counts, missing hits, malformed JSON or approximate totals. Query/Count/Scan fail without exposing documents, a total or a continuation cursor. No automatic retry is allowed and healthy requests recover. |
 | Native mutations | Execute changes a real document and retains native error payloads/status. Losing the actual increment response leaves exactly one increment and one backend attempt. |
 | Validation and limits | Raw gRPC bypasses SDK validation for managed query parameters, duplicate sorting, oversized pages/batches and asynchronous returned writes. Backend traces must contain no data requests. Oversized native responses fail without truncated output. |
 | Returned documents | Mixed returned/non-returned chains and concurrent writes through two servers return their own values and distinct revisions. Real CAS conflicts recompute against the competing writer. Failed Create returns no document. A shared response budget rejects the second commit; two coalesced RPCs retain independent budgets. |
 | Native MongoDB revision protection | Native writes change the revision observed through a second server. Unknown/destructive commands are rejected before execution; supported commands still retain native database errors. The server's MongoDB integration tests additionally hold a Merge snapshot while another service instance commits operator, replacement, or pipeline writes, then require a fresh snapshot and the combined committed value. |
+| Live Scan checkpoints | With both sort directions on all seven stores, delete the next unseen record, update another unseen record and insert on each side of the checkpoint. Alternate server replicas and page sizes, then replay the original checkpoint. An independent expected sequence detects skips, repeats and stale documents. Cancellation and a corrupt token must not damage the valid token. |
+| Cross-cluster completeness | A proxy adds a skipped remote cluster to a real successful response. Query/Count/Scan must reject it even when every reported shard succeeded. This validates response handling, not a real cross-cluster network partition. |
+| MongoDB partial writes and budgets | An unordered native insert with a duplicate key returns a NativeError while its valid sibling remains readable. Query refuses `allowPartialResults: true`. Server integration additionally checks ordered batches, an actual write-concern timeout, and small Query pages followed by an oversized lookahead document for both find and aggregate. |
 
 The backend contracts cover all seven configured stores. Deterministic HTTP
 faults, scan deadline/cursor observations, and constrained-budget cases cover
 both Elasticsearch and OpenSearch; they do not establish MongoDB cursor cleanup
-under network faults. A truncated or oversized initial search response can hide
-its scroll ID from Sink, so backend expiry remains the cleanup fallback in that
-case. The oversized Scan test checks its error and zero callbacks without
-claiming immediate cleanup. Pagination checks use quiescent fixtures and do not
-claim a snapshot across concurrent writes. Test datasets are synthetic and live
+under network faults. Paged Scan does not open a search scroll or PIT. The
+oversized Scan test requires an error without documents or a continuation cursor.
+Query pagination checks use quiescent fixtures; live Scan changes are checked
+against seek semantics and do not claim a snapshot across concurrent writes.
+Test datasets are synthetic and live
 only in the disposable qualification environment.
 
 ## Sustained fault qualification
@@ -184,6 +187,11 @@ This long run is reserved for scheduled or explicitly requested qualification.
 Routine changes and releases use the shorter single-cycle production gate and
 do not wait for a two-hour run. A short run is not evidence of sustained testing.
 
+Stateful fuzzing has a separate evidence check: Go's PASS is insufficient if the
+time limit expires during cached corpus replay. `scripts/test-fuzz.sh` requires
+mutation-phase progress and retains each log. CI and release runs allocate three
+minutes per fuzzer; an unusually large corpus requires increasing `FUZZ_TIME`.
+
 ## Run and prove the gates
 
 ```sh
@@ -193,7 +201,7 @@ SINK_SERVER_DIR=/path/to/sink make test-production
 ```
 
 The sensitivity gate first requires the current candidate to pass. It then
-builds six immutable pre-fix commits in separate temporary directories and
+builds seven immutable pre-fix commits in separate temporary directories and
 requires the corresponding incident assertion to fail on Elasticsearch. A
 compilation error, missing dependency, skip or arbitrary nonzero exit is rejected
 as proof. This checks the tests themselves and runs on every suite PR.
