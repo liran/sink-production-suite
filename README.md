@@ -13,7 +13,7 @@ contracts. The [incident matrix and reliability contract](docs/reliability-contr
 explain each missed invariant, its deterministic oracle, historical pre-fix
 failure proof, configuration/model matrix and remaining qualification gaps.
 Integration, release and sustained runs start with `make test-conformance`;
-suite PRs also prove that the tests reject seven historical broken candidates.
+suite PRs also prove that the tests reject historical broken candidates.
 
 The suite verifies:
 
@@ -75,6 +75,17 @@ The suite verifies:
     Query, Count and Scan without exposing partial output. MongoDB Query rejects
     partial shard results; unordered native writes preserve successful siblings
     while returning the original native error for a failed member.
+21. A held synchronous storage request cannot block Kafka Write/Delete
+    acceptance for the same store, with batching enabled or disabled. A paused
+    Kafka broker cannot consume synchronous write capacity; excess publishes
+    fail before enqueue, and accepted records drain in order after recovery.
+22. Eight independent returned merges coalesce into one execution and stream
+    large snapshots or outputs through bounded backend requests, preserving
+    each caller's committed document and response budget.
+23. The pinned Go SDK exercises round-robin balancing and real loopback DNS
+    changes with healthy connections, default and custom refresh intervals,
+    scale-in and temporary DNS failure. Required test events prevent an older
+    SDK with no matching tests from passing the gate.
 
 Release qualification uses a bounded three-minute active-fault workload with a
 three-minute deadline for each business cycle to reconcile. The fixture removes

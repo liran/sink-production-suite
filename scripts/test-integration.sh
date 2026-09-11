@@ -5,7 +5,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 suite_dir="$(cd "${script_dir}/.." && pwd)"
 export SINK_SERVER_DIR="${SINK_SERVER_DIR:-${suite_dir}/../sink}"
 artifacts="$(mktemp -d "${TMPDIR:-/tmp}/sink-qualification.XXXXXXXX")"
-suite_go_flags=()
+suite_go_flags=(-mod=readonly)
 if [[ -n "${SINK_GO_DIR:-}" ]]; then
   cp "${suite_dir}/go.mod" "${artifacts}/suite.go.mod"
   cp "${suite_dir}/go.sum" "${artifacts}/suite.go.sum"

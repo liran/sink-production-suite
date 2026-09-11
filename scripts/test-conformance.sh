@@ -43,19 +43,28 @@ go -C "${SINK_SERVER_DIR}" build -race -o "${SINK_SERVER_BINARY}" ./cmd/sink
 export SINK_CONFORMANCE_ELASTICSEARCH="http://$("${compose[@]}" port elasticsearch 9200)"
 export SINK_CONFORMANCE_OPENSEARCH="http://$("${compose[@]}" port opensearch 9200)"
 cd "${suite_dir}"
-suite_go_flags=()
+suite_go_flags=(-mod=readonly)
 if [[ -n "${SINK_GO_DIR:-}" ]]; then
   cp go.mod "${SINK_CONFORMANCE_ARTIFACTS}/suite.go.mod"
   cp go.sum "${SINK_CONFORMANCE_ARTIFACTS}/suite.go.sum"
   go mod edit -modfile="${SINK_CONFORMANCE_ARTIFACTS}/suite.go.mod" -replace="github.com/liran/sink-go=${SINK_GO_DIR}"
   suite_go_flags+=("-modfile=${SINK_CONFORMANCE_ARTIFACTS}/suite.go.mod")
 fi
+# Exercise the pinned SDK's real loopback DNS resolver, including healthy
+# scale-out, scale-in, SERVFAIL, and per-client refresh intervals. Require named
+# subtests so an older SDK with no matching test cannot silently pass this gate.
+go test "${suite_go_flags[@]}" -race -tags=integration github.com/liran/sink-go \
+  -run '^TestDial(BalancesWritesAndFollowsEndpointChanges|DiscoversDNSScaleChangesWithHealthyConnections)$' \
+  -count=1 -timeout=3m -json | tee "${SINK_CONFORMANCE_ARTIFACTS}/client-tests.jsonl"
+go run ./cmd/check-test-events --file "${SINK_CONFORMANCE_ARTIFACTS}/client-tests.jsonl" \
+  --require 'TestDialBalancesWritesAndFollowsEndpointChanges,TestDialDiscoversDNSScaleChangesWithHealthyConnections/default,TestDialDiscoversDNSScaleChangesWithHealthyConnections/one-second'
 go test "${suite_go_flags[@]}" -race -tags=integration ./conformance -count=1 -timeout=20m -json | tee "${SINK_CONFORMANCE_ARTIFACTS}/tests.jsonl"
 required_tests='TestHotKeyMergeAmplification,TestAppliedDoesNotInheritVisibleRefresh,TestCompletedDocumentReleasedBeforeSiblingRead,TestSuccessfulSiblingNotReplayedDuringConflict,TestVisibleDatasetsCompleteIndependently,TestReadBudgetsBelongToOriginalRPC,TestFormattedJSONBulkFraming,TestReplaceRechecksExistenceAfterConflict,TestQueuedCancellationDoesNotPoisonFollowingWrites,TestOperationStateMachine,TestSyncCrashBoundaries,TestLostBackendResponseDoesNotReplayMutation,TestCancellationAfterCommitRetainsState,TestAcceptedMutationCrashBoundaries,TestConcurrentHistories,TestSlowStoreSaturationIsBounded,TestWorkerRetainsStorageFailures'
 required_tests+=',TestNativeRejectsIncompleteBackendResults,TestNativeScanCancellationReleasesCursorAndAdmission,TestNativeExecuteLostResponseDoesNotReplay,TestReturnedWriteCommitAndConflictBoundaries,TestReturnedWriteBudgetsBelongToOriginalRPC,TestNativeResponseLimitsFailWithoutTruncation,TestNativeWireValidationBeforeExecution'
 required_tests+=',TestNativeScanDeadlinesReleaseResources,TestNativeScanResumesAfterServerExit'
 required_tests+=',TestReturnedChainReleasesIndependentPut'
 required_tests+=',TestRequestGateDiscardPreventsLateForwarding'
+required_tests+=',TestPublishingSurvivesSynchronousSaturation,TestSynchronousWritesSurvivePublisherSaturation,TestSynchronousMergesStreamLargeWorkingSets'
 go run ./cmd/check-test-events --file "${SINK_CONFORMANCE_ARTIFACTS}/tests.jsonl" --require "${required_tests}"
 if [[ "${SINK_PROVE_REGRESSIONS:-0}" == 1 ]]; then
   bash scripts/check-regression-sensitivity.sh

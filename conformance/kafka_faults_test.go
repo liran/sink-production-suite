@@ -4,6 +4,7 @@ package conformance_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 
 	sink "github.com/liran/sink-go"
 	"github.com/twmb/franz-go/pkg/kadm"
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
@@ -223,15 +225,29 @@ func (b *testBroker) committed(t *testing.T, topic string) int64 {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	offsets, err := b.admin.FetchOffsetsForTopics(ctx, topic+"-workers", topic)
-	if err != nil || offsets.Error() != nil {
-		t.Fatalf("fetch committed offsets: %v, %v", err, offsets.Error())
+	for {
+		offsets, err := b.admin.FetchOffsetsForTopics(ctx, topic+"-workers", topic)
+		err = errors.Join(err, offsets.Error())
+		if err == nil {
+			offset, ok := offsets.Lookup(topic, 0)
+			if !ok {
+				t.Fatal("source partition missing from committed-offset observation")
+			}
+			return offset.At
+		}
+		// A newly started broker can answer Ping before its group coordinator
+		// finishes initialization. Retry only that transient observation failure;
+		// never interpret it as an empty or successfully committed partition.
+		recovering := errors.Is(err, kerr.CoordinatorNotAvailable) || errors.Is(err, kerr.CoordinatorLoadInProgress) || errors.Is(err, kerr.NotCoordinator)
+		if !recovering || ctx.Err() != nil {
+			t.Fatalf("fetch committed offsets: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("group coordinator did not become available: %v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
-	offset, ok := offsets.Lookup(topic, 0)
-	if !ok {
-		t.Fatal("source partition missing from committed-offset observation")
-	}
-	return offset.At
 }
 
 func (b *testBroker) waitCommitted(t *testing.T, topic string, want int64) {
