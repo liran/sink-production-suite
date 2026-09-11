@@ -36,3 +36,7 @@ prove_regression before-bounded-shutdown 04fe67f5008ca04492bf06a802d84f9651b3e4d
 prove_regression before-storage-failure-classification de700a3d847a91dda508f562fb052b5ff109e4f2 TestWorkerRetainsStorageFailures/elasticsearch/http-401/write 'dependency failure moved records to DLQ'
 
 prove_regression before-native-completion-validation 878b24894b6476c8b30771e83bbd73f6ccfcdaaf TestNativeRejectsIncompleteBackendResults/elasticsearch/Query/missing-timeout 'failed Query exposed an apparently valid page'
+
+prove_regression before-publish-isolation 33f8d6fd28f95100c33664dabc512f163d7798d8 TestPublishingSurvivesSynchronousSaturation/elasticsearch/unbatched=false 'synchronous saturation blocked Kafka publishing'
+
+prove_regression before-streaming-working-set 026d1d16840f7cd17778f528807a1f0a32e9e378 TestSynchronousMergesStreamLargeWorkingSets/elasticsearch/snapshots 'large working set did not stream'
