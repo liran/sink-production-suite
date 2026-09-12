@@ -169,7 +169,7 @@ func runHistoryCall(ctx context.Context, client *sink.Client, address sink.Addre
 		if programErr != nil {
 			return result, programErr
 		}
-		opts := sink.MergeOptions{Incoming: document, Program: program, MissingDocumentMode: sink.MissingDocumentCreate}
+		opts := sink.MergeOptions{Incoming: document, Program: program}
 		operation, err = sink.NewMerge(address, opts)
 	} else {
 		mode := sink.WriteUpsert

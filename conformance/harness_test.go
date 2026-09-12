@@ -419,7 +419,7 @@ func merge(t *testing.T, address sink.Address, source string) sink.WriteOperatio
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts := sink.MergeOptions{Incoming: document, Program: program, MissingDocumentMode: sink.MissingDocumentCreate}
+	opts := sink.MergeOptions{Incoming: document, Program: program}
 	operation, err := sink.NewMerge(address, opts)
 	if err != nil {
 		t.Fatal(err)

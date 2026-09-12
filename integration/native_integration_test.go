@@ -396,7 +396,7 @@ func TestNativeBackendReturnedWrites(t *testing.T) {
 			t.Fatal(err)
 		}
 		incoming := documentForAddress(t, address, map[string]int{"delta": 1})
-		opts := sink.MergeOptions{Incoming: incoming, Program: program, MissingDocumentMode: sink.MissingDocumentFail}
+		opts := sink.MergeOptions{Incoming: incoming, Program: program}
 		operation, err := sink.NewMerge(address, opts)
 		if err != nil {
 			t.Fatal(err)

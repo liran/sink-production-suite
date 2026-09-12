@@ -68,7 +68,7 @@ func publishRecoveryBacklog(t *testing.T, ctx context.Context, client *sink.Clie
 			Languages: []string{fmt.Sprintf("backlog-%02d", index)},
 			Available: true,
 		}
-		operation := newMergeOperation(t, address, incoming, programs.ProductMerge, sink.MissingDocumentFail)
+		operation := newMergeOperation(t, address, incoming, programs.ProductMerge)
 		operations = append(operations, operation)
 	}
 	results, err := client.Write(ctx, sink.CompletionReturnAfterAccepted, operations...)

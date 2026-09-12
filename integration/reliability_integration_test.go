@@ -131,7 +131,7 @@ func TestReliabilityLuaAliasExpansionIsRejectedWithoutWriting(t *testing.T) {
     return value
 end`)
 	incoming := map[string]any{"value": strings.Repeat("x", 4096)}
-	operation := newMergeOperation(t, address, incoming, source, sink.MissingDocumentFail)
+	operation := newMergeOperation(t, address, incoming, source)
 	results, err := environment.client.Write(ctx, sink.CompletionWaitUntilApplied, operation)
 	if err != nil {
 		t.Fatal(err)

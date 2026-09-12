@@ -171,16 +171,15 @@ func writePut(t *testing.T, ctx context.Context, client *sink.Client, address si
 	assertWriteResults(t, results, sink.WriteApplied)
 }
 
-func newMergeOperation(t *testing.T, address sink.Address, incoming any, source []byte, missing sink.MissingDocumentMode) sink.WriteOperation {
+func newMergeOperation(t *testing.T, address sink.Address, incoming any, source []byte) sink.WriteOperation {
 	t.Helper()
 	program, err := sink.NewLuaProgram(source)
 	if err != nil {
 		t.Fatalf("sink.NewLuaProgram() error = %v", err)
 	}
 	options := sink.MergeOptions{
-		Incoming:            documentForAddress(t, address, incoming),
-		Program:             program,
-		MissingDocumentMode: missing,
+		Incoming: documentForAddress(t, address, incoming),
+		Program:  program,
 	}
 	operation, err := sink.NewMerge(address, options)
 	if err != nil {
