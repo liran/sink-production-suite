@@ -68,10 +68,10 @@ regression must fail without the shutdown deadline fix.
 
 ## Independent operation model
 
-`internal/statecheck` models Create, Upsert, Replace, Merge with both missing
-document modes, Lua failure after local mutation, Read and duplicate Delete
-using ordinary Go values. It covers all 36 pairs of write operations from both
-absent and present states, then generates 256 seeded operations on three keys.
+`internal/statecheck` models Create, Upsert, Replace, Merge with automatic
+missing-document creation, Lua failure after local mutation, Read and duplicate
+Delete using ordinary Go values. It covers all 25 pairs of write operations from
+both absent and present states, then generates 256 seeded operations on three keys.
 After every RPC it checks result order, exact permanent error classes, revision
 presence and persisted state through reordered and repeated reads. It checks
 that failed operations leave state intact and later operations still execute.

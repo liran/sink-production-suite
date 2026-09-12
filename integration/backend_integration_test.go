@@ -106,9 +106,8 @@ func testConfiguredBackend(t *testing.T, environment *testEnvironment, spec back
 			defer waitGroup.Done()
 			<-start
 			mergeOptions := sink.MergeOptions{
-				Incoming:            incomingDocument,
-				Program:             program,
-				MissingDocumentMode: sink.MissingDocumentFail,
+				Incoming: incomingDocument,
+				Program:  program,
 			}
 			merge, mergeErr := sink.NewMerge(address, mergeOptions)
 			if mergeErr != nil {

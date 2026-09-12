@@ -23,7 +23,7 @@ func TestProductMergeMatchesReferenceThroughSinkAndOpenSearch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), productionTestTimeout)
 	defer cancel()
 	writePut(t, ctx, environment.client, address, current)
-	operation := newMergeOperation(t, address, incoming, programs.ProductMerge, sink.MissingDocumentFail)
+	operation := newMergeOperation(t, address, incoming, programs.ProductMerge)
 	results, err := environment.client.Write(ctx, sink.CompletionWaitUntilVisible, operation)
 	if err != nil {
 		t.Fatalf("Write(product merge) error = %v", err)
@@ -45,7 +45,7 @@ func TestOfferMergeMatchesReferenceThroughSinkAndOpenSearch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), productionTestTimeout)
 	defer cancel()
 	writePut(t, ctx, environment.client, address, current)
-	operation := newMergeOperation(t, address, incoming, programs.OfferMerge, sink.MissingDocumentFail)
+	operation := newMergeOperation(t, address, incoming, programs.OfferMerge)
 	results, err := environment.client.Write(ctx, sink.CompletionWaitUntilVisible, operation)
 	if err != nil {
 		t.Fatalf("Write(offer merge) error = %v", err)
@@ -80,7 +80,7 @@ func TestConcurrentProductMergesAcrossSinkReplicasLoseNoSuccessfulUpdates(t *tes
 			Languages: []string{fmt.Sprintf("writer-%02d", index)},
 			Available: true,
 		}
-		operations[index] = newMergeOperation(t, address, incoming, programs.ProductMerge, sink.MissingDocumentFail)
+		operations[index] = newMergeOperation(t, address, incoming, programs.ProductMerge)
 	}
 	start := make(chan struct{})
 	errorsChannel := make(chan error, writers)

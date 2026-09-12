@@ -283,9 +283,8 @@ func runSoakCycle(ctx context.Context, opts soakCycleOptions) error {
 		return fmt.Errorf("encode merge document: %w", err)
 	}
 	mergeOptions := sink.MergeOptions{
-		Incoming:            incomingDocument,
-		Program:             opts.program,
-		MissingDocumentMode: sink.MissingDocumentFail,
+		Incoming: incomingDocument,
+		Program:  opts.program,
 	}
 	merge, err := sink.NewMerge(address, mergeOptions)
 	if err != nil {

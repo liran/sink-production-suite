@@ -61,8 +61,8 @@ func Run(t *testing.T, opts Options) {
 		t.Fatal("state model needs positive BatchSize and Steps")
 	}
 	for present := range 2 {
-		for first := range 6 {
-			for second := range 6 {
+		for first := range 5 {
+			for second := range 5 {
 				name := fmt.Sprintf("pair-%d-%d-%d", present, first, second)
 				var sequence []step
 				if present == 1 {
@@ -79,7 +79,7 @@ func Run(t *testing.T, opts Options) {
 	random := rand.New(rand.NewSource(opts.Seed))
 	sequence := make([]step, opts.Steps)
 	for i := range sequence {
-		operation := step{kind: random.Intn(8), key: random.Intn(3), value: int64(random.Intn(19) - 9)}
+		operation := step{kind: random.Intn(7), key: random.Intn(3), value: int64(random.Intn(19) - 9)}
 		sequence[i] = operation
 	}
 	runSequence(t, opts, fmt.Sprintf("seed-%d", opts.Seed), sequence)
@@ -127,9 +127,9 @@ func runSequence(t *testing.T, opts Options, name string, sequence []step) {
 		checkState(t, ctx, check)
 	}
 	for position, operation := range sequence {
-		if operation.kind >= 6 {
+		if operation.kind >= 5 {
 			flush(position)
-			if operation.kind == 6 {
+			if operation.kind == 5 {
 				address := addresses[operation.key]
 				attempt, cancel := context.WithTimeout(ctx, 5*time.Second)
 				results, err := opts.Client.Delete(attempt, sink.CompletionWaitUntilApplied, address, address)
@@ -157,14 +157,10 @@ func runSequence(t *testing.T, opts Options, name string, sequence []step) {
 				want.status, want.code = sink.WritePreconditionFailed, sink.FailurePreconditionFailed
 			}
 		case 4:
-			if !exists {
-				want.status, want.code = sink.WriteFailed, sink.FailureNotFound
-			}
-		case 5:
 			want.status, want.code = sink.WriteFailed, sink.FailureInvalidArgument
 		}
 		if want.status == sink.WriteApplied {
-			if operation.kind == 3 || operation.kind == 4 {
+			if operation.kind == 3 {
 				current.Counter += operation.value
 				value = current
 			}
@@ -198,17 +194,14 @@ func makeOperation(t *testing.T, opts operationOptions) sink.WriteOperation {
 		operation, err = sink.NewPut(opts.address, payload, modes[opts.step.kind])
 	} else {
 		source := addProgram
-		if opts.step.kind == 5 {
+		if opts.step.kind == 4 {
 			source = invalidProgram
 		}
 		program, compileErr := sink.NewLuaProgram([]byte(source))
 		if compileErr != nil {
 			t.Fatal(compileErr)
 		}
-		mergeOptions := sink.MergeOptions{Incoming: payload, Program: program, MissingDocumentMode: sink.MissingDocumentCreate}
-		if opts.step.kind == 4 {
-			mergeOptions.MissingDocumentMode = sink.MissingDocumentFail
-		}
+		mergeOptions := sink.MergeOptions{Incoming: payload, Program: program}
 		operation, err = sink.NewMerge(opts.address, mergeOptions)
 	}
 	if err != nil {

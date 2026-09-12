@@ -198,9 +198,8 @@ func newLoadTask(opts loadTaskOptions) (loadTask, error) {
 		return task, fmt.Errorf("encode load document: %w", err)
 	}
 	mergeOptions := sink.MergeOptions{
-		Incoming:            document,
-		Program:             opts.program,
-		MissingDocumentMode: sink.MissingDocumentCreate,
+		Incoming: document,
+		Program:  opts.program,
 	}
 	operation, err := sink.NewMerge(address, mergeOptions)
 	if err != nil {
