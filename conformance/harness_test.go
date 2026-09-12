@@ -80,8 +80,9 @@ func startCandidate(t *testing.T, opts serverOptions) *candidate {
 	if binary == "" {
 		t.Fatal("SINK_SERVER_BINARY is required; use make test-conformance")
 	}
-	grpcAddress := freeAddress(t)
-	metricsAddress := freeAddress(t)
+	addresses := freeAddresses(t, 2)
+	grpcAddress := addresses[0]
+	metricsAddress := addresses[1]
 	dir := t.TempDir()
 	if root := os.Getenv("SINK_CONFORMANCE_ARTIFACTS"); root != "" {
 		var err error
@@ -310,15 +311,30 @@ func defaultInt(value, fallback int) int {
 
 func freeAddress(t *testing.T) string {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	return freeAddresses(t, 1)[0]
+}
+
+func freeAddresses(t *testing.T, count int) []string {
+	t.Helper()
+	listeners := make([]net.Listener, 0, count)
+	addresses := make([]string, 0, count)
+	for range count {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			for _, listener := range listeners {
+				_ = listener.Close()
+			}
+			t.Fatal(err)
+		}
+		listeners = append(listeners, listener)
+		addresses = append(addresses, listener.Addr().String())
 	}
-	address := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
+	for _, listener := range listeners {
+		if err := listener.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
-	return address
+	return addresses
 }
 
 type httpCall struct {
