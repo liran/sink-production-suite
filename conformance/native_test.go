@@ -325,11 +325,11 @@ func TestNativeScanDeadlinesReleaseResources(t *testing.T) {
 
 func TestReturnedWriteCommitAndConflictBoundaries(t *testing.T) {
 	for _, store := range searchBackends(t) {
-		for _, unbatched := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/unbatched=%t", store.driver, unbatched), func(t *testing.T) {
+		for _, batchOps := range []int{1000, 1} {
+			t.Run(fmt.Sprintf("%s/batch-ops=%d", store.driver, batchOps), func(t *testing.T) {
 				index := indexFor(t, store, "-1")
 				proxy := proxyBackend(t, store)
-				opts := serverOptions{backend: proxy.backend, unbatched: unbatched}
+				opts := serverOptions{backend: proxy.backend, batchOps: batchOps}
 				server := startCandidate(t, opts)
 				address := addressFor(t, index, "returned")
 				gate := proxy.hold("/_bulk", "returned", 1)

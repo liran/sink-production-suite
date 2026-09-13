@@ -93,7 +93,6 @@ service:
   max_operations: 1000
   max_merge_attempts: 50
   batching:
-    enabled: true
     max_wait_milliseconds: 2
     max_operations: 1000
     max_bytes: 16777216

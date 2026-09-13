@@ -16,12 +16,12 @@ import (
 func TestPublishingSurvivesSynchronousSaturation(t *testing.T) {
 	broker := startBroker(t)
 	for _, store := range searchBackends(t) {
-		for _, unbatched := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/unbatched=%t", store.driver, unbatched), func(t *testing.T) {
+		for _, batchOps := range []int{1000, 1} {
+			t.Run(fmt.Sprintf("%s/batch-ops=%d", store.driver, batchOps), func(t *testing.T) {
 				index := indexFor(t, store, "-1")
 				proxy := proxyBackend(t, store)
 				topic := fmt.Sprintf("sink-publish-isolation-%d", time.Now().UnixNano())
-				opts := serverOptions{backend: proxy.backend, broker: broker.address, topic: topic, capacity: 1, batchOps: 1, unbatched: unbatched}
+				opts := serverOptions{backend: proxy.backend, broker: broker.address, topic: topic, capacity: 1, batchOps: batchOps}
 				server := startCandidate(t, opts)
 				blocked := addressFor(t, index, "blocked")
 				gate := proxy.hold("/_bulk", "blocked", 1)

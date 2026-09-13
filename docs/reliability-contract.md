@@ -78,13 +78,13 @@ that failed operations leave state intact and later operations still execute.
 
 The same model runs through:
 
-- one-operation RPCs, default microbatching, disabled microbatching and a
-  three-operation batch boundary against Elasticsearch and OpenSearch;
+- one-operation RPCs, default microbatching, and one-operation and
+  three-operation batch boundaries against Elasticsearch and OpenSearch;
 - all seven configured stores in the full suite, including native BSON through
   MongoDB and JSON through both search engines.
 
-Disabling microbatching does not disable within-RPC folding. One-operation RPCs
-exercise the sequential comparison path. The independent model is the oracle
+One-operation batches retain queue admission and within-RPC folding.
+One-operation RPCs exercise the sequential comparison path. The independent model is the oracle
 for all profiles; two modes agreeing with each other is not enough.
 
 `SINK_STATE_SEED` and `SINK_STATE_STEPS` control the conformance sequence.
@@ -104,7 +104,7 @@ creates, stale reads, failed writes changing state and resurrection after Delete
 legal overlapping histories must pass.
 
 The live workload checks ten-call histories from three clients and two server
-processes, with batching enabled, disabled and restricted to one operation, on
+processes, with default batches and batches restricted to one operation, on
 both search engines. `SINK_STATE_SEED` controls generated operations;
 `SINK_HISTORY_ROUNDS` defaults to 24 and nightly runs use 128. Failed histories
 retain every invocation, response, client ID and operation as JSON. This is

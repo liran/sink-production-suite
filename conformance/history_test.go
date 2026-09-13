@@ -37,19 +37,17 @@ func TestConcurrentHistories(t *testing.T) {
 		rounds = value
 	}
 	profiles := []struct {
-		name      string
-		unbatched bool
-		batchOps  int
+		name     string
+		batchOps int
 	}{
 		{name: "batched", batchOps: 1000},
-		{name: "direct", unbatched: true},
 		{name: "one-op-batches", batchOps: 1},
 	}
 	for _, store := range searchBackends(t) {
 		for _, profile := range profiles {
 			t.Run(store.driver+"/"+profile.name, func(t *testing.T) {
 				index := indexFor(t, store, "-1")
-				opts := serverOptions{backend: store, unbatched: profile.unbatched, batchOps: profile.batchOps, batchWait: 10}
+				opts := serverOptions{backend: store, batchOps: profile.batchOps, batchWait: 10}
 				first, second := startCandidate(t, opts), startCandidate(t, opts)
 				clients := []*sink.Client{first.client, second.client, first.client}
 				random := rand.New(rand.NewSource(seed))
