@@ -28,21 +28,20 @@ func TestOperationStateMachine(t *testing.T) {
 		steps = value
 	}
 	profiles := []struct {
-		name      string
-		unbatched bool
-		batchOps  int
-		rpcSize   int
+		name     string
+		batchOps int
+		rpcSize  int
 	}{
 		{name: "serial-rpcs", rpcSize: 1},
 		{name: "default-batching", rpcSize: 16},
-		{name: "batching-disabled", unbatched: true, rpcSize: 16},
+		{name: "one-op-batches", batchOps: 1, rpcSize: 16},
 		{name: "small-batches", batchOps: 3, rpcSize: 16},
 	}
 	for _, store := range searchBackends(t) {
 		for _, profile := range profiles {
 			t.Run(store.driver+"/"+profile.name, func(t *testing.T) {
 				index := indexFor(t, store, "-1")
-				opts := serverOptions{backend: store, unbatched: profile.unbatched, batchOps: profile.batchOps}
+				opts := serverOptions{backend: store, batchOps: profile.batchOps}
 				server := startCandidate(t, opts)
 				t.Logf("state model seed=%d steps=%d", seed, steps)
 				check := statecheck.Options{Client: server.client, Store: "primary", Dataset: index,

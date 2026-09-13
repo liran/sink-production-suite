@@ -51,7 +51,6 @@ func searchBackends(t *testing.T) []backend {
 
 type serverOptions struct {
 	backend        backend
-	unbatched      bool
 	batchOps       int
 	batchWait      int
 	readBytes      int
@@ -115,14 +114,13 @@ service:
   max_in_flight_requests: %d
   max_store_requests: %d
   batching:
-    enabled: %t
     max_operations: %d
     max_wait_milliseconds: %d
     max_queued_operations: %d
 shutdown_timeout_seconds: 2
 `, mode, grpcAddress, metricsAddress, opts.backend.driver, opts.backend.endpoint,
 		candidateKafkaConfig(opts), candidateSecondaryConfig(opts), defaultInt(opts.requestTimeout, 20), defaultInt(opts.readBytes, 32<<20), defaultInt(opts.maxOps, 1000),
-		defaultInt(opts.capacity*2, 128), defaultInt(opts.capacity, 32), !opts.unbatched,
+		defaultInt(opts.capacity*2, 128), defaultInt(opts.capacity, 32),
 		defaultInt(opts.batchOps, 1000), defaultInt(opts.batchWait, 2), defaultInt(opts.queued, 10000))
 	configPath := filepath.Join(dir, "server.yaml")
 	if err := os.WriteFile(filepath.Join(dir, "test-name.txt"), []byte(t.Name()), 0600); err != nil {

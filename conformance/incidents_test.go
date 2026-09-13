@@ -280,7 +280,7 @@ func TestReplaceRechecksExistenceAfterConflict(t *testing.T) {
 					t.Fatalf("seed replacement: %d %s", code, body)
 				}
 				proxy := proxyBackend(t, store)
-				opts := serverOptions{backend: proxy.backend, unbatched: true}
+				opts := serverOptions{backend: proxy.backend, batchOps: 1}
 				server := startCandidate(t, opts)
 				gate := proxy.hold("/_bulk", "replace", 1)
 				t.Cleanup(gate.open)

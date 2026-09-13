@@ -76,7 +76,7 @@ The suite verifies:
     partial shard results; unordered native writes preserve successful siblings
     while returning the original native error for a failed member.
 21. A held synchronous storage request cannot block Kafka Write/Delete
-    acceptance for the same store, with batching enabled or disabled. A paused
+    acceptance for the same store, with default and one-operation batches. A paused
     Kafka broker cannot consume synchronous write capacity; excess publishes
     fail before enqueue, and accepted records drain in order after recovery.
 22. Eight independent returned merges coalesce into one execution and stream
